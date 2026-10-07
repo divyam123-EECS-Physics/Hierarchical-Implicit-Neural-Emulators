@@ -1,0 +1,17 @@
+name: hine
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - h5py
+  - einops
+  - matplotlib
+  - pandas
+  - tqdm
+  - pillow
+  - pip
+  - pip:
+      - opencv-python
+      - torch_fidelity

@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Local / virtual envs (conda lives on $PSCRATCH, not in-repo)
+.venv/
+venv/
+env/
+
+# Training outputs and notebooks
+output/
+results/
+.ipynb_checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
