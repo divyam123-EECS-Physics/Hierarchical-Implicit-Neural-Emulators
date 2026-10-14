@@ -1,4 +1,5 @@
 import argparse
+import csv
 import datetime
 import numpy as np
 import os
@@ -10,7 +11,7 @@ import torch.backends.cudnn as cudnn
 
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
-from engine_mar import train_one_epoch, eval_model_rec, roll_out_seq
+from engine_mar import train_one_epoch, validation_loss, eval_model_rec, roll_out_seq
 import copy
 from dataloader import DistributedPreloadDataset
 
@@ -223,7 +224,7 @@ def main(args):
             if args.distributed:
                 sampler_train.set_epoch(epoch)
 
-            train_one_epoch(
+            train_stats, _ = train_one_epoch(
                 model, 
                 model_params, ema_params,
                 data_loader_train,
@@ -232,6 +233,7 @@ def main(args):
                 args=args,
                 dataset_validation=dataset_validation,
             )
+            val_stats = validation_loss(model, dataset_validation, device, args)
 
             # save checkpoint
             if epoch % args.save_last_freq == 0 or epoch + 1 == args.epochs:
@@ -242,6 +244,31 @@ def main(args):
                                 loss_scaler=loss_scaler, epoch=epoch, ema_params=ema_params, epoch_name=f"{epoch}")
 
             if misc.is_main_process():
+                metrics_dir = os.path.join(args.output_dir, 'csv')
+                os.makedirs(metrics_dir, exist_ok=True)
+                metrics_path = os.path.join(metrics_dir, 'train_metrics.csv')
+                fieldnames = [
+                    'epoch', 'lr', 'loss', 'high_loss', 'mid_loss', 'low_loss', 'grad_norm',
+                    'val_loss', 'val_high_loss', 'val_mid_loss', 'val_low_loss',
+                ]
+                write_header = not os.path.exists(metrics_path)
+                with open(metrics_path, 'a', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    if write_header:
+                        writer.writeheader()
+                    writer.writerow({
+                        'epoch': epoch,
+                        'lr': train_stats.get('lr', ''),
+                        'loss': train_stats.get('loss', ''),
+                        'high_loss': train_stats.get('high_loss', ''),
+                        'mid_loss': train_stats.get('mid_loss', ''),
+                        'low_loss': train_stats.get('low_loss', ''),
+                        'grad_norm': train_stats.get('grad_norm', ''),
+                        'val_loss': val_stats.get('val_loss', ''),
+                        'val_high_loss': val_stats.get('val_high_loss', ''),
+                        'val_mid_loss': val_stats.get('val_mid_loss', ''),
+                        'val_low_loss': val_stats.get('val_low_loss', ''),
+                    })
                 if log_writer is not None:
                     log_writer.flush()
 

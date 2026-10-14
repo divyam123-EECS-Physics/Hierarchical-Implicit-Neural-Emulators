@@ -2,6 +2,7 @@ import math,pdb
 import sys
 from typing import Iterable
 import torch
+import torch.distributed as dist
 import util.misc as misc
 import util.lr_sched as lr_sched
 import torch_fidelity
@@ -19,6 +20,44 @@ F = torch.nn.functional
 
 def gather_imgs(dataset, sidx, eidx):
     return torch.stack([dataset.images[i] for i in range(sidx, eidx)])
+
+
+@torch.no_grad()
+def validation_loss(model, dataset_validation, device, args):
+    """Score the validation set with the same FutureINN training loss."""
+    model.eval()
+    net = model.module if hasattr(model, 'module') else model
+    loader = torch.utils.data.DataLoader(
+        dataset_validation,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False,
+    )
+    sum_loss = torch.zeros(4, device=device)
+    n_samples = torch.zeros(1, device=device)
+    for samples in loader:
+        x = samples.to(device).float()
+        b = x.shape[0]
+        with torch.cuda.amp.autocast():
+            loss, high_loss, mid_loss, low_loss = net(x)
+        sum_loss[0] += float(loss) * b
+        sum_loss[1] += float(high_loss) * b
+        sum_loss[2] += float(mid_loss) * b
+        sum_loss[3] += float(low_loss) * b
+        n_samples[0] += b
+    if misc.get_world_size() > 1:
+        dist.all_reduce(sum_loss)
+        dist.all_reduce(n_samples)
+    model.train()
+    n = max(float(n_samples.item()), 1.0)
+    return {
+        'val_loss': (sum_loss[0] / n).item(),
+        'val_high_loss': (sum_loss[1] / n).item(),
+        'val_mid_loss': (sum_loss[2] / n).item(),
+        'val_low_loss': (sum_loss[3] / n).item(),
+    }
 
 def plot(predict_img, test_img, output_dir='', epoch = 0, sidx = 0):
     # pred: B * T * H * W 
@@ -99,10 +138,12 @@ def eval_model_rec(model, data_loader, epoch=5000, device=0, sidx=5, tms=20, btz
     ## normlize and calculate the diff
     if tms < 2000:
         os.makedirs(f'{output_dir}/csv', exist_ok=True)
+        os.makedirs(f'{output_dir}/plots', exist_ok=True)
         test_img = (test_img-x_min) / (x_max-x_min)
         mse, mse_std = eval_mse(predict_img, test_img)
         df = pd.DataFrame(dict(time=list(np.arange(tms*num_of_frame)), mse=mse.cpu().data.numpy(), mse_std=mse_std.cpu().data.numpy()))
         df.to_csv(f'{output_dir}/csv/mse_{epoch:04d}_{sidx}_{prefix}.csv', index=False, float_format='%.5f')
+        plot(predict_img)
         return {'test_img': test_img, 'predict_img': predict_img, 'mse': mse, 'min_max': [x_min, x_max]}
 
 def update_ema(target_params, source_params, rate=0.99):

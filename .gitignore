@@ -15,11 +15,15 @@ env/
 
 # Training outputs and notebooks
 output/
+output_debug_smoke/
 results/
 .ipynb_checkpoints/
 *.pt
 *.pth
 *.ckpt
+
+# Local NERSC Slurm launchers and job logs
+nersc_job_launchers/
 
 # OS / editor
 .DS_Store
