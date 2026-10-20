@@ -128,6 +128,16 @@ class AttentionOp(torch.autograd.Function):
         dk = torch.einsum('ncq,nqk->nck', q.to(torch.float32), db).to(k.dtype) / np.sqrt(k.shape[1])
         return dq, dk
 
+    @staticmethod
+    def jvp(ctx, dq, dk):
+        q, k, w = ctx.saved_tensors
+        scale = np.sqrt(k.shape[1])
+        ds = torch.einsum('ncq,nck->nqk', dq.to(torch.float32), (k / scale).to(torch.float32))
+        ds = ds + torch.einsum('ncq,nck->nqk', q.to(torch.float32), (dk / scale).to(torch.float32))
+        w32 = w.to(torch.float32)
+        dw = w32 * (ds - (w32 * ds).sum(dim=2, keepdim=True))
+        return dw.to(q.dtype)
+
 #----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
