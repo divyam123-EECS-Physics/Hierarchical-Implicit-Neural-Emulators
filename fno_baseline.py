@@ -24,7 +24,11 @@ class FNO2dBlock(nn.Module):
 
 
 class FNO2d(nn.Module):
-    """Autoregressive one-step map: vorticity(t) -> vorticity(t+1)."""
+    """Autoregressive map: stacked vorticity channels in -> stacked channels out.
+
+    Default is one-step (in_channels=out_channels=1). Multi-step baselines use
+    equal in/out lengths (2-to-2, 3-to-3) with time stacked as channels.
+    """
 
     def __init__(
         self,
@@ -38,6 +42,8 @@ class FNO2d(nn.Module):
         self.modes = modes
         self.width = width
         self.n_layers = n_layers
+        self.in_channels = in_channels
+        self.out_channels = out_channels
         self.lift = nn.Conv2d(in_channels, width, kernel_size=1)
         self.blocks = nn.ModuleList(
             [FNO2dBlock(width, modes, modes) for _ in range(n_layers)]
@@ -49,7 +55,7 @@ class FNO2d(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, 1, H, W). SpectralConv2d's complex GEMM has no ComplexHalf
+        # x: (B, C_in, H, W). SpectralConv2d's complex GEMM has no ComplexHalf
         # CUDA kernel, so this map always runs in float32.
         x = x.float()
         with torch.autocast(device_type=x.device.type, enabled=False):

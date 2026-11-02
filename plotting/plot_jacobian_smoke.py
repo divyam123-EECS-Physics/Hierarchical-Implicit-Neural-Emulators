@@ -8,7 +8,7 @@ Example (interactive CPU, shared):
   salloc -A m5326 -C cpu -q shared_interactive -t 00:30:00 -n 1 -c 8 --mem=32G
   module load conda && conda activate hine
   cd /global/homes/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
-  python plot_jacobian_smoke.py
+  python plotting/plot_jacobian_smoke.py
 
 Or full exclusive interactive CPU node:
   salloc -A m5326 -C cpu -q interactive -t 00:30:00 -N 1

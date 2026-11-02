@@ -28,6 +28,9 @@ A single Fourier-augmented U-Net (`ufno.py`) produces all three resolutions in o
 ├── ufno.py                 # Fourier-augmented U-Net backbone (spectral convolutions)
 ├── dataloader.py           # DistributedPreloadDataset: consecutive-frame sequence loader
 ├── engine_mar.py           # train_one_epoch, autoregressive rollout, MSE evaluation, plotting
+├── plotting/               # Plot notebooks and plot_*.py helpers
+├── eval/                   # Eval scripts (eval_*.py) and jacobian_manual.ipynb
+├── output/                 # Local training/eval run artifacts
 ├── experiments/
 │   ├── srun.sh             # 4-GPU training launch (SLURM)
 │   └── eval.sh             # single-GPU evaluation launch
@@ -110,7 +113,7 @@ bash experiments/srun.sh
 torchrun --nnodes=1 --nproc_per_node=4 main.py \
   --img_size 256 --batch_size 32 \
   --num_of_frame 4 --ds_factor 8 --ds_factor_low 32 \
-  --output_dir output --resume output
+  --output_dir output/output --resume output/output
 ```
 
 Checkpoints are written to `--output_dir` as `checkpoint-last.pth` and periodic `checkpoint-<epoch>.pth`; training resumes automatically if a checkpoint is found there.
@@ -129,7 +132,7 @@ bash experiments/eval.sh
 torchrun --nnodes=1 --nproc_per_node=1 main.py \
   --img_size 256 --batch_size 32 \
   --num_of_frame 4 --ds_factor 8 --ds_factor_low 32 \
-  --output_dir output --resume output \
+  --output_dir output/output --resume output/output \
   --evaluate --resume_epoch 700
 ```
 

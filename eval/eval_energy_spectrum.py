@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 import matplotlib
 
@@ -15,15 +20,16 @@ from tqdm import tqdm
 
 from util.py2d import Omega2Psi, Psi2UV, initialize_wavenumbers_rfft2
 
-REPO_DIR = Path(__file__).resolve().parent
+REPO_DIR = _REPO
 EVAL_DIR = Path("/global/homes/d/divyam/TACSLAB/eval")
-OUT_NPZ = REPO_DIR / "energy_spectrum_eval200.npz"
-OUT_PNG = REPO_DIR / "energy_spectrum_eval200.png"
+OUT_DIR = REPO_DIR / "output"
+OUT_NPZ = OUT_DIR / "energy_spectrum_eval200.npz"
+OUT_PNG = OUT_DIR / "energy_spectrum_eval200.png"
 
 N = 256
 LX = LY = 2.0 * np.pi
 STEM_START = 91621  # first eval stem
-STRIDE = 1  # no skipped frames
+STRIDE = 5  # every 5th solver frame
 N_STEPS = 200
 
 
@@ -53,7 +59,7 @@ def scalar_kinetic_energy(omega: np.ndarray, Kx, Ky, invKsq) -> float:
 
 def main() -> None:
     stems = STEM_START + STRIDE * np.arange(N_STEPS, dtype=np.int64)
-    assert stems[-1] == STEM_START + N_STEPS - 1
+    assert stems[-1] == STEM_START + STRIDE * (N_STEPS - 1)
 
     Kx, Ky, Kabs, _, invKsq = initialize_wavenumbers_rfft2(N, N, LX, LY, INDEXING="ij")
     weight = np.ones_like(Kabs, dtype=np.float64)
@@ -93,11 +99,12 @@ def main() -> None:
     if rel > 1e-6:
         raise RuntimeError(f"Parseval check failed: rel err {rel}")
 
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(OUT_NPZ, k=k, Ek_mean=Ek_mean, stems=stems)
     print(f"wrote {OUT_NPZ}")
 
     fig, ax = plt.subplots(figsize=(5.2, 4))
-    ax.loglog(k, Ek_mean, color="0.4", linestyle="--", label="Reference Truth")
+    ax.loglog(k, Ek_mean, color="0.4", linestyle="--", label="5 frames")
     ax.set_xlabel("Wavenumber")
     ax.set_ylabel("Energy Spectrum")
     ax.set_xlim(1, 128)

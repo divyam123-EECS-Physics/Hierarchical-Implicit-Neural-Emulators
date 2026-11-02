@@ -14,6 +14,10 @@ import os
 import sys
 from pathlib import Path
 
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -124,6 +128,24 @@ def load_trajectories(
     return trajectories
 
 
+def _remap_low_res_out_keys(
+    state_dict: dict, mid_res: int, low_res: int
+) -> dict:
+    """Map older resolution-keyed heads (e.g. low_res_out.32) to index keys (0/1)."""
+    out: dict = {}
+    for key, value in state_dict.items():
+        new_key = key
+        for prefix in ("vit.low_res_out.", "ema_vit.low_res_out."):
+            if key.startswith(f"{prefix}{mid_res}."):
+                new_key = f"{prefix}0." + key[len(f"{prefix}{mid_res}.") :]
+                break
+            if key.startswith(f"{prefix}{low_res}."):
+                new_key = f"{prefix}1." + key[len(f"{prefix}{low_res}.") :]
+                break
+        out[new_key] = value
+    return out
+
+
 def load_model(checkpoint_path: str, device: torch.device) -> tuple[FutureINN, torch.nn.Module]:
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
@@ -131,7 +153,13 @@ def load_model(checkpoint_path: str, device: torch.device) -> tuple[FutureINN, t
     if "args" not in ckpt or "model" not in ckpt:
         raise KeyError("Checkpoint must contain 'args' and 'model'")
     model = FutureINN(ckpt["args"]).to(device)
-    model.load_state_dict(ckpt["model"])
+    state = ckpt["model"]
+    try:
+        model.load_state_dict(state)
+    except RuntimeError:
+        # paper_1gpu and other older L3 ckpts keyed heads by spatial size.
+        state = _remap_low_res_out_keys(state, model.ds_res, model.low_res)
+        model.load_state_dict(state)
     model.eval()
     for p in model.parameters():
         p.requires_grad_(False)

@@ -43,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         help="Dense torch eigvals, or matrix-free SciPy ARPACK",
     )
     p.add_argument(
+        "--jacobian",
+        choices=["high", "full"],
+        default="high",
+        help="high: next-high vs high (mid/low fixed). full: square map over (high,mid,low)",
+    )
+    p.add_argument(
         "--every-nth-field",
         type=int,
         default=5,
@@ -126,29 +132,63 @@ def reset_peak_gpu() -> None:
         torch.cuda.synchronize()
 
 
+def pack_l3_state(high: torch.Tensor, mid: torch.Tensor, low: torch.Tensor) -> torch.Tensor:
+    return torch.cat(
+        [high.reshape(-1), mid.reshape(-1), low.reshape(-1)],
+        dim=0,
+    )
+
+
+def unpack_l3_state(
+    flat: torch.Tensor,
+    high: torch.Tensor,
+    mid: torch.Tensor,
+    low: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    nh = high.numel()
+    nm = mid.numel()
+    return (
+        flat[:nh].reshape_as(high),
+        flat[nh : nh + nm].reshape_as(mid),
+        flat[nh + nm :].reshape_as(low),
+    )
+
+
 def time_one_jvp(
     ema_vit: torch.nn.Module,
     high: torch.Tensor,
     mid: torch.Tensor,
     low: torch.Tensor,
+    jacobian: str = "high",
 ) -> float:
-    """Wall time for one exact high-field JVP (notebook matvec pattern)."""
+    """Wall time for one JVP of the selected eigen-operator."""
     dtype = high.dtype
     device = high.device
     mid_c = mid.detach().to(dtype)
     low_c = low.detach().to(dtype)
     h0 = high.detach().to(dtype)
     t = 2 * torch.ones(h0.shape[0], device=device, dtype=dtype)
-    v = torch.randn_like(h0)
-    v = v / v.norm()
     if device.type == "cuda":
         torch.cuda.synchronize()
     t0 = time.perf_counter()
-    _, jv = torch.autograd.functional.jvp(
-        lambda h: ema_vit(h, mid_c, low_c, t)[0],
-        (h0,),
-        (v,),
-    )
+    if jacobian == "high":
+        v = torch.randn_like(h0)
+        v = v / v.norm()
+        _, jv = torch.autograd.functional.jvp(
+            lambda h: ema_vit(h, mid_c, low_c, t)[0],
+            (h0,),
+            (v,),
+        )
+    else:
+        v = torch.randn(pack_l3_state(h0, mid_c, low_c).numel(), device=device, dtype=dtype)
+        v = v / v.norm()
+        vh, vm, vl = unpack_l3_state(v, h0, mid_c, low_c)
+
+        def f(h, m, l):
+            oh, om, ol = ema_vit(h, m, l, t)
+            return pack_l3_state(oh, om, ol)
+
+        _, jv = torch.autograd.functional.jvp(f, (h0, mid_c, low_c), (vh, vm, vl))
     _ = jv.detach()
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -198,6 +238,7 @@ def compute_scipy_eigs(
     ncv: int,
     maxiter: int,
     tol: float,
+    jacobian: str = "high",
 ) -> dict[str, np.ndarray]:
     """Notebook matrix-free path: jvp matvec + scipy.sparse.linalg.eigs."""
     dtype = next(ema_vit.parameters()).dtype
@@ -205,22 +246,41 @@ def compute_scipy_eigs(
     mid_c = mid.detach().to(dtype)
     low_c = low.detach().to(dtype)
     t = 2 * torch.ones(h0.shape[0], device=h0.device, dtype=dtype)
-    n = int(h0.numel())
+    if jacobian == "high":
+        n = int(h0.numel())
+
+        def matvec(v_np: np.ndarray) -> np.ndarray:
+            v = (
+                torch.from_numpy(np.ascontiguousarray(v_np))
+                .to(device=h0.device, dtype=h0.dtype)
+                .reshape_as(h0)
+            )
+            _, jv = torch.autograd.functional.jvp(
+                lambda h: ema_vit(h, mid_c, low_c, t)[0],
+                (h0,),
+                (v,),
+            )
+            return jv.detach().reshape(-1).float().cpu().numpy()
+
+    else:
+        n = int(h0.numel() + mid_c.numel() + low_c.numel())
+
+        def matvec(v_np: np.ndarray) -> np.ndarray:
+            v = torch.from_numpy(np.ascontiguousarray(v_np)).to(
+                device=h0.device, dtype=h0.dtype
+            )
+            vh, vm, vl = unpack_l3_state(v, h0, mid_c, low_c)
+
+            def f(h, m, l):
+                oh, om, ol = ema_vit(h, m, l, t)
+                return pack_l3_state(oh, om, ol)
+
+            _, jv = torch.autograd.functional.jvp(
+                f, (h0, mid_c, low_c), (vh, vm, vl)
+            )
+            return jv.detach().reshape(-1).float().cpu().numpy()
+
     ncv_eff = min(max(ncv, 2), n)
-
-    def matvec(v_np: np.ndarray) -> np.ndarray:
-        v = (
-            torch.from_numpy(np.ascontiguousarray(v_np))
-            .to(device=h0.device, dtype=h0.dtype)
-            .reshape_as(h0)
-        )
-        _, jv = torch.autograd.functional.jvp(
-            lambda h: ema_vit(h, mid_c, low_c, t)[0],
-            (h0,),
-            (v,),
-        )
-        return jv.detach().reshape(-1).float().cpu().numpy()
-
     op = spla.LinearOperator((n, n), matvec=matvec, dtype=np.float32)
     rng = np.random.default_rng(0)
     v0 = rng.standard_normal(n).astype(np.float32)
@@ -258,11 +318,14 @@ def compute_scipy_eigs(
         "ncv": np.asarray(ncv_eff, dtype=np.int64),
         "maxiter": np.asarray(maxiter, dtype=np.int64),
         "tol": np.asarray(tol, dtype=np.float64),
+        "jacobian": np.asarray(jacobian),
     }
 
 
 def main() -> None:
     args = parse_args()
+    if args.method == "torch" and args.jacobian == "full":
+        raise ValueError("--jacobian full is only supported with --method scipy")
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -288,7 +351,7 @@ def main() -> None:
     print(
         f"kept={len(kept)} full_sections={n_available} "
         f"using_section={int(chosen[0])} horizon={args.horizon} "
-        f"method={args.method} device={device} "
+        f"method={args.method} jacobian={args.jacobian} device={device} "
         f"ncv={args.ncv} maxiter={args.maxiter} tol={args.tol}",
         flush=True,
     )
@@ -322,10 +385,13 @@ def main() -> None:
     mid = mid.detach()
     low = low.detach()
 
-    n = int(high.numel())
-    jvp_s = time_one_jvp(ema_vit, high, mid, low)
+    if args.jacobian == "high":
+        n = int(high.numel())
+    else:
+        n = int(high.numel() + mid.numel() + low.numel())
+    jvp_s = time_one_jvp(ema_vit, high, mid, low, jacobian=args.jacobian)
     print(
-        f"one_jvp_s={jvp_s:.4f} "
+        f"one_jvp_s={jvp_s:.4f} jacobian={args.jacobian} "
         f"extrapolated_full_jacobian_s≈{jvp_s * n:.1f} "
         f"(n={n} reverse products) "
         f"extrapolated_scipy_eigs_s≈{jvp_s * args.maxiter:.1f} "
@@ -335,6 +401,7 @@ def main() -> None:
 
     summary_lines = [
         f"method={args.method}",
+        f"jacobian={args.jacobian}",
         f"checkpoint={args.checkpoint}",
         f"section={int(chosen[0])}",
         f"horizon={args.horizon}",
@@ -373,6 +440,7 @@ def main() -> None:
                     ncv=args.ncv,
                     maxiter=args.maxiter,
                     tol=args.tol,
+                    jacobian=args.jacobian,
                 )
         except torch.cuda.OutOfMemoryError as exc:
             fail_path = save_dir / f"step_{k}_failed.txt"
@@ -395,6 +463,7 @@ def main() -> None:
         result["peak_gpu_mib"] = np.asarray(peak_mib, dtype=np.float64)
         result["step"] = np.asarray(k, dtype=np.int64)
         result["method"] = np.asarray(args.method)
+        result["jacobian"] = np.asarray(args.jacobian)
 
         np.savez_compressed(out_path, **result)
         radius = float(result["radius"])

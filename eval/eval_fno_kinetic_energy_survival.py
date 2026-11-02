@@ -8,8 +8,14 @@ Leaves the original kinetic-energy script and notebook untouched.
 
 from __future__ import annotations
 
+import argparse
 import os
+import sys
 from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 import matplotlib
 
@@ -22,27 +28,52 @@ from tqdm import tqdm
 
 from util.py2d import Omega2Psi, Psi2UV, initialize_wavenumbers_rfft2
 
-ROLLOUT_NPZ = Path(
+DEFAULT_ROLLOUT_NPZ = Path(
     "/pscratch/sd/d/divyam/hine_runs/fno_baseline_debug/jacobian_manual_mse/rollout_mse.npz"
 )
-SAVE_DIR = ROLLOUT_NPZ.parent
+DEFAULT_REF_CACHE = Path(
+    "/pscratch/sd/d/divyam/hine_runs/paper_1gpu/jacobian_manual_mse/"
+    "reference_kinetic_energy.npz"
+)
+# Notebook imports these module-level defaults.
+ROLLOUT_NPZ = DEFAULT_ROLLOUT_NPZ
+SAVE_DIR = DEFAULT_ROLLOUT_NPZ.parent
+REF_CACHE = DEFAULT_REF_CACHE
+OUT_NPZ = SAVE_DIR / "kinetic_energy_survival.npz"
 DATA_ROOT = Path("/global/homes/d/divyam/TACSLAB")
 TRAIN_DIR = DATA_ROOT / "train"
 VAL_DIR = DATA_ROOT / "validation"
 EVAL_DIR = DATA_ROOT / "eval"
 REF_STEM_MIN = 10000
 REF_STEM_MAX = 105000
-# Shared with the HINE run; do not write next to HINE outputs.
-REF_CACHE = Path(
-    "/pscratch/sd/d/divyam/hine_runs/paper_1gpu/jacobian_manual_mse/"
-    "reference_kinetic_energy.npz"
-)
-OUT_NPZ = SAVE_DIR / "kinetic_energy_survival.npz"
 LX = LY = 2.0 * np.pi
 IMG_SIZE = 256
 SIGMA_MULT = 5.0
 REF_BATCH = 64
 PRED_BATCH = 32
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--rollout-npz",
+        type=Path,
+        default=DEFAULT_ROLLOUT_NPZ,
+        help="rollout_mse.npz from eval_fno_jacobian_manual_mse.py",
+    )
+    p.add_argument(
+        "--save-dir",
+        type=Path,
+        default=None,
+        help="Defaults to the parent of --rollout-npz",
+    )
+    p.add_argument(
+        "--ref-cache",
+        type=Path,
+        default=DEFAULT_REF_CACHE,
+        help="Shared HINE reference cache; falls back to <save-dir>/reference_kinetic_energy.npz",
+    )
+    return p.parse_args()
 
 
 def make_wavenumber_tensors(nx: int, ny: int, device: torch.device, dtype=torch.float32):
@@ -90,21 +121,26 @@ def mat_path_for_stem(stem: int) -> Path:
 
 
 def load_or_build_reference(
-    Kx_t, Ky_t, invKsq_t, device: torch.device
+    ref_cache: Path,
+    save_dir: Path,
+    Kx_t,
+    Ky_t,
+    invKsq_t,
+    device: torch.device,
 ) -> tuple[np.ndarray, float, float]:
-    if REF_CACHE.is_file():
-        cache = np.load(REF_CACHE)
+    if ref_cache.is_file():
+        cache = np.load(ref_cache)
         energies = np.asarray(cache["energies"], dtype=np.float64)
         stems = np.asarray(cache["stems"], dtype=np.int64)
         mu = float(cache["mu_E"])
         sigma = float(cache["sigma_E"])
-        print(f"loaded cache {REF_CACHE}  n={energies.size}  mu={mu:.6g} sigma={sigma:.6g}")
+        print(f"loaded cache {ref_cache}  n={energies.size}  mu={mu:.6g} sigma={sigma:.6g}")
         expected = np.arange(REF_STEM_MIN, REF_STEM_MAX + 1, dtype=np.int64)
         assert stems.shape == expected.shape and np.array_equal(stems, expected)
         return energies, mu, sigma
 
     # Fallback: build once under the FNO save dir without touching the HINE path.
-    local_cache = SAVE_DIR / "reference_kinetic_energy.npz"
+    local_cache = save_dir / "reference_kinetic_energy.npz"
     stems = np.arange(REF_STEM_MIN, REF_STEM_MAX + 1, dtype=np.int64)
     energies = np.empty(stems.size, dtype=np.float64)
     buf: list[np.ndarray] = []
@@ -125,6 +161,7 @@ def load_or_build_reference(
 
     mu = float(energies.mean())
     sigma = float(energies.std(ddof=0))
+    os.makedirs(local_cache.parent, exist_ok=True)
     np.savez_compressed(
         local_cache,
         energies=energies,
@@ -164,12 +201,18 @@ def survival_curve(
 
 
 def main() -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"host={os.uname().nodename} device={device} save_dir={SAVE_DIR}")
-    assert ROLLOUT_NPZ.is_file(), f"missing {ROLLOUT_NPZ}"
-    os.makedirs(SAVE_DIR, exist_ok=True)
+    args = parse_args()
+    rollout_npz = args.rollout_npz
+    save_dir = args.save_dir if args.save_dir is not None else rollout_npz.parent
+    ref_cache = args.ref_cache
+    out_npz = save_dir / "kinetic_energy_survival.npz"
 
-    meta = np.load(ROLLOUT_NPZ, allow_pickle=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"host={os.uname().nodename} device={device} save_dir={save_dir}")
+    assert rollout_npz.is_file(), f"missing {rollout_npz}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    meta = np.load(rollout_npz, allow_pickle=True)
     lead = np.asarray(meta["lead"], dtype=np.int64)
     norm = float(np.asarray(meta["norm"]))
     every_nth_field = int(np.asarray(meta["every_nth_field"]))
@@ -219,7 +262,7 @@ def main() -> None:
     print(f"enstrophy (1/2 mean omega^2)={ens:.8g}  KE={e_np:.8g}")
     assert abs(ens - e_np) / max(abs(e_np), abs(ens), 1e-12) > 1e-3
 
-    with np.load(ROLLOUT_NPZ) as z:
+    with np.load(rollout_npz) as z:
         sample_norm = np.asarray(z["ar_pred_high"][0, 0, 0], dtype=np.float64)
     sample_phys = sample_norm * norm
     e_np_s = kinetic_energy_numpy(sample_phys, Kx_np, Ky_np, invKsq_np)
@@ -240,7 +283,9 @@ def main() -> None:
     assert rel_s < 1e-5
     print("cross-check OK")
 
-    ref_energies, mu_E, sigma_E = load_or_build_reference(Kx_t, Ky_t, invKsq_t, device)
+    ref_energies, mu_E, sigma_E = load_or_build_reference(
+        ref_cache, save_dir, Kx_t, Ky_t, invKsq_t, device
+    )
     lo = mu_E - SIGMA_MULT * sigma_E
     hi = mu_E + SIGMA_MULT * sigma_E
     z_max = float((ref_energies.max() - mu_E) / sigma_E)
@@ -254,7 +299,7 @@ def main() -> None:
         f"outside 4 sigma: {outside_4}  outside 5 sigma: {outside_5}"
     )
 
-    with np.load(ROLLOUT_NPZ) as z:
+    with np.load(rollout_npz) as z:
         ar_pred_high = np.asarray(z["ar_pred_high"])
         gt_high = np.asarray(z["gt_high"])
     ar_E = energies_from_high_field(ar_pred_high, norm, Kx_t, Ky_t, invKsq_t, device)
@@ -288,7 +333,7 @@ def main() -> None:
     ax.set_ylabel(r"kinetic energy $E$")
     ax.set_title("FNO kinetic energy vs lead (saved rollout)")
     ax.legend(loc="best")
-    ke_fig = SAVE_DIR / "kinetic_energy_vs_lead.png"
+    ke_fig = save_dir / "kinetic_energy_vs_lead.png"
     fig.savefig(ke_fig, dpi=150)
     plt.close(fig)
     print(f"wrote {ke_fig}")
@@ -304,13 +349,13 @@ def main() -> None:
     )
     ax.legend(loc="best")
     ax.grid(True, alpha=0.3)
-    s_fig = SAVE_DIR / "stability_rate_vs_lead.png"
+    s_fig = save_dir / "stability_rate_vs_lead.png"
     fig.savefig(s_fig, dpi=150)
     plt.close(fig)
     print(f"wrote {s_fig}")
 
     np.savez_compressed(
-        OUT_NPZ,
+        out_npz,
         lead=lead,
         ar_E=ar_E,
         gt_E=gt_E,
@@ -328,13 +373,13 @@ def main() -> None:
         ref_n=np.asarray(ref_energies.size, dtype=np.int64),
         ref_outside_4sigma=np.asarray(outside_4, dtype=np.int64),
         ref_outside_5sigma=np.asarray(outside_5, dtype=np.int64),
-        rollout_npz=np.asarray(str(ROLLOUT_NPZ)),
+        rollout_npz=np.asarray(str(rollout_npz)),
         chosen=chosen,
         file_stem=file_stem,
         target_stem=target_stem,
         model_type=np.asarray("fno"),
     )
-    print(f"wrote {OUT_NPZ}")
+    print(f"wrote {out_npz}")
     print("FNO_KINETIC_ENERGY_SURVIVAL_DONE")
 
 

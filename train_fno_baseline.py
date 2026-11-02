@@ -2,7 +2,8 @@
 """Train the paper's L=1 FNO baseline on 2D NS vorticity (arXiv:2506.04528).
 
 Uses the same data loader / AdamW / lr schedule conventions as main.py.
-One-step map: frame[t] -> frame[t+1] with ell_1 + ell_2 loss.
+Default one-step map: frame[t] -> frame[t+1] with ell_1 + ell_2 loss.
+Also supports equal multi-step maps (2-to-2, 3-to-3) via --in_steps/--out_steps.
 """
 
 from __future__ import annotations
@@ -29,7 +30,24 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 def get_args_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser("FNO L=1 baseline", add_help=False)
     p.add_argument("--img_size", default=256, type=int)
-    p.add_argument("--num_of_frame", default=2, type=int, help="L=1: current + next")
+    p.add_argument(
+        "--num_of_frame",
+        default=2,
+        type=int,
+        help="Loader window length; must equal in_steps + out_steps",
+    )
+    p.add_argument(
+        "--in_steps",
+        default=1,
+        type=int,
+        help="Input frames stacked as channels (1, 2, or 3)",
+    )
+    p.add_argument(
+        "--out_steps",
+        default=1,
+        type=int,
+        help="Output frames stacked as channels; must equal in_steps",
+    )
     p.add_argument("--modes", default=96, type=int, help="Fourier modes; paper grid {64,96,128}")
     p.add_argument("--width", default=32, type=int, help="Channel width (~130M with modes=96, 3 layers)")
     p.add_argument("--n_layers", default=3, type=int)
@@ -42,7 +60,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     p.add_argument("--lr_schedule", type=str, default="constant")
     p.add_argument("--warmup_epochs", type=int, default=10)
     p.add_argument("--weight_decay", type=float, default=0.03)
-    p.add_argument("--output_dir", default="./output_fno")
+    p.add_argument("--output_dir", default="./output/output_fno")
     p.add_argument("--resume", default="")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", default=1, type=int)
@@ -56,6 +74,18 @@ def get_args_parser() -> argparse.ArgumentParser:
     p.add_argument("--dist_url", default="env://")
     p.add_argument("--start_epoch", default=0, type=int)
     return p
+
+
+def validate_step_args(args: argparse.Namespace) -> None:
+    if args.in_steps < 1 or args.out_steps < 1:
+        raise ValueError("in_steps and out_steps must be >= 1")
+    if args.in_steps != args.out_steps:
+        raise ValueError("AR baseline requires in_steps == out_steps")
+    if args.num_of_frame != args.in_steps + args.out_steps:
+        raise ValueError(
+            f"num_of_frame must be in_steps + out_steps "
+            f"({args.in_steps}+{args.out_steps}), got {args.num_of_frame}"
+        )
 
 
 @torch.no_grad()
@@ -72,10 +102,11 @@ def validation_loss(model, dataset_validation, device, args) -> dict[str, float]
     )
     total = 0.0
     n = 0
+    n_in = args.in_steps
     for samples in loader:
         x = samples.to(device).float()
-        pred = net(x[:, [0]])
-        loss = fno_step_loss(pred, x[:, [1]])
+        pred = net(x[:, :n_in])
+        loss = fno_step_loss(pred, x[:, n_in:])
         b = x.shape[0]
         total += float(loss) * b
         n += b
@@ -84,20 +115,25 @@ def validation_loss(model, dataset_validation, device, args) -> dict[str, float]
 
 
 @torch.no_grad()
-def short_rollout_mse(model, dataset, device, sidx: int, tms: int = 20) -> float:
-    """Autoregressive MSE vs ground truth over tms steps from start index sidx."""
+def short_rollout_mse(model, dataset, device, args, sidx: int, tms: int = 20) -> float:
+    """Autoregressive MSE vs ground truth; scores each predicted frame."""
     net = model.module if hasattr(model, "module") else model
-    n_frames = min(sidx + tms + 1, len(dataset.images))
-    if n_frames - sidx < 2:
+    n_in, n_out = args.in_steps, args.out_steps
+    n_frames = min(sidx + n_in + tms, len(dataset.images))
+    if n_frames - sidx < n_in + n_out:
         return float("nan")
     truth = torch.stack(
         [dataset.images[i] for i in range(sidx, n_frames)], dim=0
     ).float().to(device)  # (T, H, W)
-    pred = truth[0:1].unsqueeze(0)  # (1, 1, H, W)
+    ctx = truth[:n_in].unsqueeze(0)  # (1, n_in, H, W)
     errs = []
-    for t in range(1, truth.shape[0]):
-        pred = net(pred)
-        errs.append(float(((pred[0, 0] - truth[t]) ** 2).mean().item()))
+    t = n_in
+    while t + n_out <= truth.shape[0]:
+        pred = net(ctx)  # (1, n_out, H, W)
+        for j in range(n_out):
+            errs.append(float(((pred[0, j] - truth[t + j]) ** 2).mean().item()))
+        ctx = pred
+        t += n_out
     return float(np.mean(errs)) if errs else float("nan")
 
 
@@ -108,6 +144,7 @@ def train_one_epoch(model, data_loader, optimizer, device, epoch, args):
     header = f"Epoch: [{epoch}]"
     print_freq = 12
     optimizer.zero_grad()
+    n_in = args.in_steps
 
     for data_iter_step, samples in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
@@ -116,8 +153,8 @@ def train_one_epoch(model, data_loader, optimizer, device, epoch, args):
             optimizer, data_iter_step / len(data_loader) + epoch, args
         )
         x = samples.to(device).float()
-        pred = model(x[:, [0]])
-        loss = fno_step_loss(pred, x[:, [1]])
+        pred = model(x[:, :n_in])
+        loss = fno_step_loss(pred, x[:, n_in:])
 
         if not math.isfinite(loss.item()):
             print(f"Loss is {loss.item()}, stopping training")
@@ -139,6 +176,7 @@ def train_one_epoch(model, data_loader, optimizer, device, epoch, args):
 
 
 def main(args):
+    validate_step_args(args)
     misc.init_distributed_mode(args)
     print("job dir:", os.path.dirname(os.path.realpath(__file__)))
     print("{}".format(args).replace(", ", ",\n"))
@@ -166,9 +204,18 @@ def main(args):
         shuffle=True,
     )
 
-    model = FNO2d(modes=args.modes, width=args.width, n_layers=args.n_layers)
+    model = FNO2d(
+        modes=args.modes,
+        width=args.width,
+        n_layers=args.n_layers,
+        in_channels=args.in_steps,
+        out_channels=args.out_steps,
+    )
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"FNO2d modes={args.modes} width={args.width} layers={args.n_layers}")
+    print(
+        f"FNO2d modes={args.modes} width={args.width} layers={args.n_layers} "
+        f"in_steps={args.in_steps} out_steps={args.out_steps}"
+    )
     print(f"Number of trainable parameters: {n_params / 1e6:.2f}M")
 
     model.to(device)
@@ -217,7 +264,9 @@ def main(args):
         if epoch % args.eval_freq == 0 and epoch > 0 and misc.is_main_process():
             model.eval()
             for sidx in (0, 100):
-                mse = short_rollout_mse(model, dataset_validation, device, sidx, tms=20)
+                mse = short_rollout_mse(
+                    model, dataset_validation, device, args, sidx, tms=20
+                )
                 print(f"short rollout val sidx={sidx}: mean MSE={mse:.6g}")
             model.train()
 

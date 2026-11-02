@@ -283,6 +283,7 @@ class UNet(torch.nn.Module):
         self.map_layer0 = Linear(in_features=model_channels, out_features=emb_channels, **init)
         self.map_layer1 = Linear(in_features=emb_channels, out_features=emb_channels, **init)
         self.inject_res = inject_res
+        self.output_res = list(output_res)
         # Encoder.
         self.enc = torch.nn.ModuleDict()
         self.low_res_inject = torch.nn.ModuleDict()
@@ -324,13 +325,14 @@ class UNet(torch.nn.Module):
                 cout = model_channels * mult
                 fno_mode = min(res // 2 + 1, 96)
                 self.dec[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, fno_mode = fno_mode, attention=(res in attn_resolutions), **block_kwargs)
-            if res in output_res:
-                fno_mode = min(res // 2 + 1, 96)
-                self.low_res_out[f'{res}'] = nn.Sequential(
-                                UNetBlock(in_channels=cout, out_channels=cout, fno_mode = fno_mode, disable_emb = True, **block_kwargs),
-                                GroupNorm(num_channels=cout), nn.SiLU(),
-                                nn.Conv2d(cout, 1, kernel_size = 3, padding = 1), 
-                                )
+            for i, out_r in enumerate(self.output_res):
+                if out_r == res:
+                    fno_mode = min(res // 2 + 1, 96)
+                    self.low_res_out[str(i)] = nn.Sequential(
+                                    UNetBlock(in_channels=cout, out_channels=cout, fno_mode = fno_mode, disable_emb = True, **block_kwargs),
+                                    GroupNorm(num_channels=cout), nn.SiLU(),
+                                    nn.Conv2d(cout, 1, kernel_size = 3, padding = 1),
+                                    )
         self.out_norm = GroupNorm(num_channels=cout)
         self.out_conv = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3)
 
@@ -360,12 +362,10 @@ class UNet(torch.nn.Module):
 
         # Decoder.
         for key, block in self.dec.items():
-            if 'up' in key and x_low_res.shape[-1] == x.shape[-1]:
-                res=x.shape[-1]
-                x_low_res_out = self.low_res_out[f'{res}'](x)
-            if 'up' in key and x_mid_res.shape[-1] == x.shape[-1]:
-                res=x.shape[-1]
-                x_mid_res_out = self.low_res_out[f'{res}'](x)
+            if 'up' in key and x.shape[-1] == self.output_res[1]:
+                x_low_res_out = self.low_res_out['1'](x)
+            if 'up' in key and x.shape[-1] == self.output_res[0]:
+                x_mid_res_out = self.low_res_out['0'](x)
             #print(x.shape)
             if x.shape[1] != block.in_channels:
                 x = torch.cat([x, skips.pop()], dim=1)

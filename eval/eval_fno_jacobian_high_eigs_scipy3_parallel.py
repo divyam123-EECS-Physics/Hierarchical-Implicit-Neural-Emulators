@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Multi-GPU scipy_3 high-field Jacobian eigenvalue sweep.
+"""Multi-GPU scipy_3 Jacobian eigenvalue sweep for the L=1 FNO baseline.
 
-Even-splits --n-initial-conditions sections via choose_sections (same as
-eval_jacobian_manual_mse.py), then runs one section per GPU. Each worker uses
-the scipy_3 ARPACK path (k=1, which=LM, JVP matvec) and saves eigenvalues plus
-eigenvectors every autoregressive frame.
+Same orchestrator / ARPACK settings as eval_jacobian_high_eigs_scipy3_parallel.py,
+but the map is FNO2d(high) with no mid/low warmup. Leaves the HINE script untouched.
 
 Orchestrator:
-  python eval_jacobian_high_eigs_scipy3_parallel.py --n-initial-conditions 4 --n-gpus 4
+  python eval_fno_jacobian_high_eigs_scipy3_parallel.py --n-initial-conditions 4 --n-gpus 4
 
 Worker (set by the parent with CUDA_VISIBLE_DEVICES):
-  python eval_jacobian_high_eigs_scipy3_parallel.py --worker --section-index 0 ...
+  python eval_fno_jacobian_high_eigs_scipy3_parallel.py --worker --section-index 0 ...
 """
 
 from __future__ import annotations
@@ -23,6 +21,10 @@ import threading
 import time
 from pathlib import Path
 
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
 # Parent orchestrator must not bind GPUs; workers set CUDA_VISIBLE_DEVICES in env.
 if "--worker" not in sys.argv:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -31,12 +33,13 @@ import numpy as np
 import scipy.sparse.linalg as spla
 import torch
 
+from eval_fno_jacobian_manual_mse import load_fno
 from eval_jacobian_manual_mse import (
     choose_sections,
     load_kept_paths,
-    load_model,
     load_trajectories,
 )
+from fno_baseline import FNO2d
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -75,7 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--checkpoint",
-        default="/pscratch/sd/d/divyam/hine_runs/paper_1gpu/checkpoint-last.pth",
+        default="/pscratch/sd/d/divyam/hine_runs/fno_baseline_debug/checkpoint-last.pth",
     )
     p.add_argument(
         "--horizon",
@@ -94,7 +97,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--save-dir",
-        default="/pscratch/sd/d/divyam/hine_runs/paper_1gpu/jacobian_high_eigs/scipy_3_n4",
+        default="/pscratch/sd/d/divyam/hine_runs/fno_baseline_debug/jacobian_high_eigs/scipy_3_n4",
         help="Root for orchestrator; worker uses a section_* subdirectory",
     )
     p.add_argument("--ncv", type=int, default=20)
@@ -120,49 +123,33 @@ def reset_peak_gpu() -> None:
         torch.cuda.synchronize()
 
 
-def time_one_jvp(
-    ema_vit: torch.nn.Module,
-    high: torch.Tensor,
-    mid: torch.Tensor,
-    low: torch.Tensor,
-) -> float:
-    dtype = high.dtype
-    device = high.device
-    mid_c = mid.detach().to(dtype)
-    low_c = low.detach().to(dtype)
-    h0 = high.detach().to(dtype)
-    t = 2 * torch.ones(h0.shape[0], device=device, dtype=dtype)
+def time_one_jvp(net: FNO2d, high: torch.Tensor) -> float:
+    h0 = high.detach().float()
     v = torch.randn_like(h0)
     v = v / v.norm()
-    if device.type == "cuda":
+    if h0.device.type == "cuda":
         torch.cuda.synchronize()
     t0 = time.perf_counter()
     _, jv = torch.autograd.functional.jvp(
-        lambda h: ema_vit(h, mid_c, low_c, t)[0],
+        lambda h: net(h),
         (h0,),
         (v,),
     )
     _ = jv.detach()
-    if device.type == "cuda":
+    if h0.device.type == "cuda":
         torch.cuda.synchronize()
     return time.perf_counter() - t0
 
 
 def compute_scipy_eigs(
-    ema_vit: torch.nn.Module,
+    net: FNO2d,
     high: torch.Tensor,
-    mid: torch.Tensor,
-    low: torch.Tensor,
     ncv: int,
     maxiter: int,
     tol: float,
 ) -> dict[str, np.ndarray]:
-    """scipy_3 path with eigenvectors: jvp matvec + eigs(k=1, which=LM)."""
-    dtype = next(ema_vit.parameters()).dtype
-    h0 = high.detach().to(dtype)
-    mid_c = mid.detach().to(dtype)
-    low_c = low.detach().to(dtype)
-    t = 2 * torch.ones(h0.shape[0], device=h0.device, dtype=dtype)
+    """scipy_3 path with eigenvectors: jvp of FNO2d + eigs(k=1, which=LM)."""
+    h0 = high.detach().float()
     n = int(h0.numel())
     ncv_eff = min(max(ncv, 2), n)
 
@@ -173,7 +160,7 @@ def compute_scipy_eigs(
             .reshape_as(h0)
         )
         _, jv = torch.autograd.functional.jvp(
-            lambda h: ema_vit(h, mid_c, low_c, t)[0],
+            lambda h: net(h),
             (h0,),
             (v,),
         )
@@ -271,36 +258,34 @@ def run_worker(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    model, ema_vit = load_model(args.checkpoint, device)
+    net = load_fno(args.checkpoint, device)
+    n_in = int(net.in_channels)
+    n_out = int(net.out_channels)
+    if n_in != n_out:
+        raise ValueError(
+            f"FNO Jacobian needs a square map, got in_channels={n_in} "
+            f"out_channels={n_out}"
+        )
+    if len(frames) < n_in:
+        raise ValueError(
+            f"Need at least {n_in} frames to stack the FNO input, got {len(frames)}"
+        )
     print(
         f"[section {section_id}] checkpoint={args.checkpoint} "
-        f"ds_res={model.ds_res} low_res={model.low_res}",
+        f"modes={net.modes} width={net.width} layers={net.n_layers} "
+        f"in_channels={n_in} out_channels={n_out}",
         flush=True,
     )
 
-    init_np = np.asarray(frames[0], dtype=np.float32)
-    high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
-    dtype = next(ema_vit.parameters()).dtype
-    high = high.to(dtype)
-    b = high.shape[0]
-    mid0 = torch.zeros(
-        b, 1, model.ds_res, model.ds_res, device=device, dtype=high.dtype
+    init_np = np.stack(
+        [np.asarray(frames[i], dtype=np.float32) for i in range(n_in)],
+        axis=0,
     )
-    low0 = torch.zeros(
-        b, 1, model.low_res, model.low_res, device=device, dtype=high.dtype
-    )
-    with torch.no_grad():
-        _, mid, _ = ema_vit(
-            high, mid0, low0, torch.zeros(b, device=device, dtype=high.dtype)
-        )
-        _, _, low = ema_vit(
-            high, mid, low0, torch.ones(b, device=device, dtype=high.dtype)
-        )
-    mid = mid.detach()
-    low = low.detach()
+    high = torch.from_numpy(init_np).to(device).unsqueeze(0) / args.norm
+    high = high.float()
 
     n = int(high.numel())
-    jvp_s = time_one_jvp(ema_vit, high, mid, low)
+    jvp_s = time_one_jvp(net, high)
     print(
         f"[section {section_id}] one_jvp_s={jvp_s:.4f} state_dim={n}",
         flush=True,
@@ -308,6 +293,7 @@ def run_worker(args: argparse.Namespace) -> None:
 
     summary_lines = [
         "method=scipy",
+        "model_type=fno",
         f"checkpoint={args.checkpoint}",
         f"section_index={args.section_index}",
         f"section_id={section_id}",
@@ -321,7 +307,6 @@ def run_worker(args: argparse.Namespace) -> None:
         f"tol={args.tol}",
     ]
 
-    t2 = 2 * torch.ones(b, device=device, dtype=high.dtype)
     n_jac_steps = args.horizon
 
     for k in range(n_jac_steps):
@@ -334,10 +319,8 @@ def run_worker(args: argparse.Namespace) -> None:
         t0 = time.perf_counter()
         try:
             result = compute_scipy_eigs(
-                ema_vit,
+                net,
                 high,
-                mid,
-                low,
                 ncv=args.ncv,
                 maxiter=args.maxiter,
                 tol=args.tol,
@@ -370,6 +353,7 @@ def run_worker(args: argparse.Namespace) -> None:
         result["section_id"] = np.asarray(section_id, dtype=np.int64)
         result["section_index"] = np.asarray(args.section_index, dtype=np.int64)
         result["method"] = np.asarray("scipy")
+        result["model_type"] = np.asarray("fno")
 
         np.savez_compressed(out_path, **result)
         radius = float(result["radius"])
@@ -385,15 +369,13 @@ def run_worker(args: argparse.Namespace) -> None:
 
         if k + 1 < n_jac_steps:
             with torch.no_grad():
-                high, mid, low = ema_vit(high, mid, low, t2)
+                high = net(high)
             high = high.detach()
-            mid = mid.detach()
-            low = low.detach()
 
     summary_path = save_dir / "summary.txt"
     summary_path.write_text("\n".join(summary_lines) + "\n")
     print(f"[section {section_id}] wrote {summary_path}", flush=True)
-    print(f"[section {section_id}] JACOBIAN_HIGH_EIGS_WORKER_DONE", flush=True)
+    print(f"[section {section_id}] FNO_JACOBIAN_HIGH_EIGS_WORKER_DONE", flush=True)
 
 
 def _pump(stream, prefix: str) -> None:

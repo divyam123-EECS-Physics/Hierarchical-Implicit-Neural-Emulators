@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Multi-GPU scipy_3 Jacobian eigenvalue sweep for the L=1 FNO baseline.
+"""Multi-GPU scipy_3 high-field Jacobian eigenvalue sweep.
 
-Same orchestrator / ARPACK settings as eval_jacobian_high_eigs_scipy3_parallel.py,
-but the map is FNO2d(high) with no mid/low warmup. Leaves the HINE script untouched.
+Even-splits --n-initial-conditions sections via choose_sections (same as
+eval_jacobian_manual_mse.py), then runs one section per GPU. Each worker uses
+the scipy_3 ARPACK path (k=1, which=LM, JVP matvec) and saves eigenvalues plus
+eigenvectors every autoregressive frame.
 
 Orchestrator:
-  python eval_fno_jacobian_high_eigs_scipy3_parallel.py --n-initial-conditions 4 --n-gpus 4
+  python eval_jacobian_high_eigs_scipy3_parallel.py --n-initial-conditions 4 --n-gpus 4
 
 Worker (set by the parent with CUDA_VISIBLE_DEVICES):
-  python eval_fno_jacobian_high_eigs_scipy3_parallel.py --worker --section-index 0 ...
+  python eval_jacobian_high_eigs_scipy3_parallel.py --worker --section-index 0 ...
 """
 
 from __future__ import annotations
@@ -29,13 +31,13 @@ import numpy as np
 import scipy.sparse.linalg as spla
 import torch
 
-from eval_fno_jacobian_manual_mse import load_fno
+from eval_jacobian_high_eigs import pack_l3_state, unpack_l3_state
 from eval_jacobian_manual_mse import (
     choose_sections,
     load_kept_paths,
+    load_model,
     load_trajectories,
 )
-from fno_baseline import FNO2d
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -74,7 +76,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--checkpoint",
-        default="/pscratch/sd/d/divyam/hine_runs/fno_baseline_debug/checkpoint-last.pth",
+        default="/pscratch/sd/d/divyam/hine_runs/paper_1gpu/checkpoint-last.pth",
     )
     p.add_argument(
         "--horizon",
@@ -93,12 +95,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--save-dir",
-        default="/pscratch/sd/d/divyam/hine_runs/fno_baseline_debug/jacobian_high_eigs/scipy_3_n4",
+        default="/pscratch/sd/d/divyam/hine_runs/paper_1gpu/jacobian_high_eigs/scipy_3_n4",
         help="Root for orchestrator; worker uses a section_* subdirectory",
     )
     p.add_argument("--ncv", type=int, default=20)
     p.add_argument("--maxiter", type=int, default=120)
     p.add_argument("--tol", type=float, default=1e-3)
+    p.add_argument(
+        "--jacobian",
+        choices=["high", "full"],
+        default="high",
+        help="high: next-high vs high (mid/low fixed). full: square map over (high,mid,low)",
+    )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
 
@@ -119,49 +127,99 @@ def reset_peak_gpu() -> None:
         torch.cuda.synchronize()
 
 
-def time_one_jvp(net: FNO2d, high: torch.Tensor) -> float:
-    h0 = high.detach().float()
-    v = torch.randn_like(h0)
-    v = v / v.norm()
-    if h0.device.type == "cuda":
+def time_one_jvp(
+    ema_vit: torch.nn.Module,
+    high: torch.Tensor,
+    mid: torch.Tensor,
+    low: torch.Tensor,
+    jacobian: str = "high",
+) -> float:
+    dtype = high.dtype
+    device = high.device
+    mid_c = mid.detach().to(dtype)
+    low_c = low.detach().to(dtype)
+    h0 = high.detach().to(dtype)
+    t = 2 * torch.ones(h0.shape[0], device=device, dtype=dtype)
+    if device.type == "cuda":
         torch.cuda.synchronize()
     t0 = time.perf_counter()
-    _, jv = torch.autograd.functional.jvp(
-        lambda h: net(h),
-        (h0,),
-        (v,),
-    )
+    if jacobian == "high":
+        v = torch.randn_like(h0)
+        v = v / v.norm()
+        _, jv = torch.autograd.functional.jvp(
+            lambda h: ema_vit(h, mid_c, low_c, t)[0],
+            (h0,),
+            (v,),
+        )
+    else:
+        v = torch.randn(
+            pack_l3_state(h0, mid_c, low_c).numel(), device=device, dtype=dtype
+        )
+        v = v / v.norm()
+        vh, vm, vl = unpack_l3_state(v, h0, mid_c, low_c)
+
+        def f(h, m, l):
+            oh, om, ol = ema_vit(h, m, l, t)
+            return pack_l3_state(oh, om, ol)
+
+        _, jv = torch.autograd.functional.jvp(f, (h0, mid_c, low_c), (vh, vm, vl))
     _ = jv.detach()
-    if h0.device.type == "cuda":
+    if device.type == "cuda":
         torch.cuda.synchronize()
     return time.perf_counter() - t0
 
 
 def compute_scipy_eigs(
-    net: FNO2d,
+    ema_vit: torch.nn.Module,
     high: torch.Tensor,
+    mid: torch.Tensor,
+    low: torch.Tensor,
     ncv: int,
     maxiter: int,
     tol: float,
+    jacobian: str = "high",
 ) -> dict[str, np.ndarray]:
-    """scipy_3 path with eigenvectors: jvp of FNO2d + eigs(k=1, which=LM)."""
-    h0 = high.detach().float()
-    n = int(h0.numel())
+    """scipy_3 path with eigenvectors: jvp matvec + eigs(k=1, which=LM)."""
+    dtype = next(ema_vit.parameters()).dtype
+    h0 = high.detach().to(dtype)
+    mid_c = mid.detach().to(dtype)
+    low_c = low.detach().to(dtype)
+    t = 2 * torch.ones(h0.shape[0], device=h0.device, dtype=dtype)
+    if jacobian == "high":
+        n = int(h0.numel())
+
+        def matvec(v_np: np.ndarray) -> np.ndarray:
+            v = (
+                torch.from_numpy(np.ascontiguousarray(v_np))
+                .to(device=h0.device, dtype=h0.dtype)
+                .reshape_as(h0)
+            )
+            _, jv = torch.autograd.functional.jvp(
+                lambda h: ema_vit(h, mid_c, low_c, t)[0],
+                (h0,),
+                (v,),
+            )
+            return jv.detach().reshape(-1).float().cpu().numpy()
+
+    else:
+        n = int(h0.numel() + mid_c.numel() + low_c.numel())
+
+        def matvec(v_np: np.ndarray) -> np.ndarray:
+            v = torch.from_numpy(np.ascontiguousarray(v_np)).to(
+                device=h0.device, dtype=h0.dtype
+            )
+            vh, vm, vl = unpack_l3_state(v, h0, mid_c, low_c)
+
+            def f(h, m, l):
+                oh, om, ol = ema_vit(h, m, l, t)
+                return pack_l3_state(oh, om, ol)
+
+            _, jv = torch.autograd.functional.jvp(
+                f, (h0, mid_c, low_c), (vh, vm, vl)
+            )
+            return jv.detach().reshape(-1).float().cpu().numpy()
+
     ncv_eff = min(max(ncv, 2), n)
-
-    def matvec(v_np: np.ndarray) -> np.ndarray:
-        v = (
-            torch.from_numpy(np.ascontiguousarray(v_np))
-            .to(device=h0.device, dtype=h0.dtype)
-            .reshape_as(h0)
-        )
-        _, jv = torch.autograd.functional.jvp(
-            lambda h: net(h),
-            (h0,),
-            (v,),
-        )
-        return jv.detach().reshape(-1).float().cpu().numpy()
-
     op = spla.LinearOperator((n, n), matvec=matvec, dtype=np.float32)
     rng = np.random.default_rng(0)
     v0 = rng.standard_normal(n).astype(np.float32)
@@ -209,6 +267,7 @@ def compute_scipy_eigs(
         "ncv": np.asarray(ncv_eff, dtype=np.int64),
         "maxiter": np.asarray(maxiter, dtype=np.int64),
         "tol": np.asarray(tol, dtype=np.float64),
+        "jacobian": np.asarray(jacobian),
     }
 
 
@@ -249,32 +308,53 @@ def run_worker(args: argparse.Namespace) -> None:
     print(
         f"[worker section_index={args.section_index} section_id={section_id}] "
         f"CUDA_VISIBLE_DEVICES={visible!r} device={device} "
-        f"ncv={args.ncv} maxiter={args.maxiter} tol={args.tol} "
-        f"save_dir={save_dir}",
+        f"jacobian={args.jacobian} ncv={args.ncv} maxiter={args.maxiter} "
+        f"tol={args.tol} save_dir={save_dir}",
         flush=True,
     )
 
-    net = load_fno(args.checkpoint, device)
+    model, ema_vit = load_model(args.checkpoint, device)
     print(
         f"[section {section_id}] checkpoint={args.checkpoint} "
-        f"modes={net.modes} width={net.width} layers={net.n_layers}",
+        f"ds_res={model.ds_res} low_res={model.low_res}",
         flush=True,
     )
 
     init_np = np.asarray(frames[0], dtype=np.float32)
     high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
-    high = high.float()
+    dtype = next(ema_vit.parameters()).dtype
+    high = high.to(dtype)
+    b = high.shape[0]
+    mid0 = torch.zeros(
+        b, 1, model.ds_res, model.ds_res, device=device, dtype=high.dtype
+    )
+    low0 = torch.zeros(
+        b, 1, model.low_res, model.low_res, device=device, dtype=high.dtype
+    )
+    with torch.no_grad():
+        _, mid, _ = ema_vit(
+            high, mid0, low0, torch.zeros(b, device=device, dtype=high.dtype)
+        )
+        _, _, low = ema_vit(
+            high, mid, low0, torch.ones(b, device=device, dtype=high.dtype)
+        )
+    mid = mid.detach()
+    low = low.detach()
 
-    n = int(high.numel())
-    jvp_s = time_one_jvp(net, high)
+    if args.jacobian == "high":
+        n = int(high.numel())
+    else:
+        n = int(high.numel() + mid.numel() + low.numel())
+    jvp_s = time_one_jvp(ema_vit, high, mid, low, jacobian=args.jacobian)
     print(
-        f"[section {section_id}] one_jvp_s={jvp_s:.4f} state_dim={n}",
+        f"[section {section_id}] one_jvp_s={jvp_s:.4f} "
+        f"jacobian={args.jacobian} state_dim={n}",
         flush=True,
     )
 
     summary_lines = [
         "method=scipy",
-        "model_type=fno",
+        f"jacobian={args.jacobian}",
         f"checkpoint={args.checkpoint}",
         f"section_index={args.section_index}",
         f"section_id={section_id}",
@@ -288,6 +368,7 @@ def run_worker(args: argparse.Namespace) -> None:
         f"tol={args.tol}",
     ]
 
+    t2 = 2 * torch.ones(b, device=device, dtype=high.dtype)
     n_jac_steps = args.horizon
 
     for k in range(n_jac_steps):
@@ -300,11 +381,14 @@ def run_worker(args: argparse.Namespace) -> None:
         t0 = time.perf_counter()
         try:
             result = compute_scipy_eigs(
-                net,
+                ema_vit,
                 high,
+                mid,
+                low,
                 ncv=args.ncv,
                 maxiter=args.maxiter,
                 tol=args.tol,
+                jacobian=args.jacobian,
             )
         except torch.cuda.OutOfMemoryError as exc:
             fail_path = save_dir / f"step_{k}_failed.txt"
@@ -334,7 +418,7 @@ def run_worker(args: argparse.Namespace) -> None:
         result["section_id"] = np.asarray(section_id, dtype=np.int64)
         result["section_index"] = np.asarray(args.section_index, dtype=np.int64)
         result["method"] = np.asarray("scipy")
-        result["model_type"] = np.asarray("fno")
+        result["jacobian"] = np.asarray(args.jacobian)
 
         np.savez_compressed(out_path, **result)
         radius = float(result["radius"])
@@ -350,13 +434,15 @@ def run_worker(args: argparse.Namespace) -> None:
 
         if k + 1 < n_jac_steps:
             with torch.no_grad():
-                high = net(high)
+                high, mid, low = ema_vit(high, mid, low, t2)
             high = high.detach()
+            mid = mid.detach()
+            low = low.detach()
 
     summary_path = save_dir / "summary.txt"
     summary_path.write_text("\n".join(summary_lines) + "\n")
     print(f"[section {section_id}] wrote {summary_path}", flush=True)
-    print(f"[section {section_id}] FNO_JACOBIAN_HIGH_EIGS_WORKER_DONE", flush=True)
+    print(f"[section {section_id}] JACOBIAN_HIGH_EIGS_WORKER_DONE", flush=True)
 
 
 def _pump(stream, prefix: str) -> None:
@@ -426,6 +512,8 @@ def run_orchestrator(args: argparse.Namespace) -> None:
             str(args.maxiter),
             "--tol",
             str(args.tol),
+            "--jacobian",
+            args.jacobian,
             "--seed",
             str(args.seed),
         ]

@@ -88,7 +88,7 @@ def roll_out_seq(model, init_frame, rollout_step, min_val = None, max_val = None
         max_val = all.max()
     return mpl.colormaps['bwr']((all - min_val) / (max_val - min_val))[...,:3]
 
-def eval_model_rec(model, data_loader, epoch=5000, device=0, sidx=5, tms=20, btz=1, output_dir='output_dir', \
+def eval_model_rec(model, data_loader, epoch=5000, device=0, sidx=5, tms=20, btz=1, output_dir='output/output_dir', \
                 prefix = '', test=False, save_folder = 'data_long'):
     num_of_frame = 1
     if tms < 2000:

@@ -1,0 +1,1075 @@
+| distributed init (rank 0): env://, gpu 0
+/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W1026 16:25:40.737258009 ProcessGroupNCCL.cpp:5310] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[16:25:40.812665] job dir: /global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
+[16:25:40.813610] Namespace(ds_factor=8,
+ds_factor_low=32,
+ratio=0.85,
+img_size=256,
+num_of_frame=4,
+batch_size=8,
+epochs=1,
+eval_freq=25,
+save_last_freq=50,
+evaluate=False,
+weight_decay=0.05,
+lr=5e-05,
+blr=0.0001,
+min_lr=0.0,
+lr_schedule='constant',
+warmup_epochs=10,
+acc_grad=1,
+ema_rate=0.9995,
+eval_idx=0,
+data_path='./data/imagenet',
+output_dir='output_debug_256_32_8',
+log_dir='output_debug_256_32_8',
+device='cuda',
+seed=1,
+resume='output_debug_256_32_8',
+resume_epoch=0,
+start_epoch=0,
+num_workers=4,
+pin_mem=True,
+world_size=1,
+local_rank=-1,
+dist_on_itp=False,
+dist_url='env://',
+rank=0,
+gpu=0,
+distributed=True,
+dist_backend='nccl')
+[16:25:40.980857] 16204
+  0%|          | 0/64 [00:00<?, ?it/s]  2%|▏         | 1/64 [00:00<00:29,  2.13it/s]  3%|▎         | 2/64 [00:00<00:26,  2.32it/s]  5%|▍         | 3/64 [00:01<00:25,  2.37it/s]  6%|▋         | 4/64 [00:01<00:24,  2.46it/s]  8%|▊         | 5/64 [00:02<00:23,  2.50it/s]  9%|▉         | 6/64 [00:02<00:23,  2.52it/s] 11%|█         | 7/64 [00:02<00:22,  2.54it/s] 12%|█▎        | 8/64 [00:03<00:22,  2.52it/s] 14%|█▍        | 9/64 [00:03<00:21,  2.53it/s] 16%|█▌        | 10/64 [00:04<00:21,  2.53it/s] 17%|█▋        | 11/64 [00:04<00:20,  2.56it/s] 19%|█▉        | 12/64 [00:04<00:20,  2.52it/s] 20%|██        | 13/64 [00:05<00:20,  2.54it/s] 22%|██▏       | 14/64 [00:05<00:19,  2.54it/s] 23%|██▎       | 15/64 [00:05<00:19,  2.55it/s] 23%|██▎       | 15/64 [00:06<00:20,  2.35it/s]
+[16:25:47.397889] 121
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  5.55it/s]100%|██████████| 1/1 [00:00<00:00,  5.38it/s]
+[16:25:47.621866] 2676
+  0%|          | 0/11 [00:00<?, ?it/s]  9%|▉         | 1/11 [00:00<00:03,  2.64it/s] 18%|█▊        | 2/11 [00:00<00:03,  2.59it/s] 27%|██▋       | 3/11 [00:01<00:03,  2.51it/s] 36%|███▋      | 4/11 [00:01<00:02,  2.51it/s] 45%|████▌     | 5/11 [00:01<00:02,  2.49it/s] 55%|█████▍    | 6/11 [00:02<00:02,  2.48it/s] 64%|██████▎   | 7/11 [00:02<00:01,  2.32it/s] 73%|███████▎  | 8/11 [00:03<00:01,  2.34it/s] 82%|████████▏ | 9/11 [00:03<00:00,  2.37it/s] 91%|█████████ | 10/11 [00:04<00:00,  2.38it/s]100%|██████████| 11/11 [00:04<00:00,  2.88it/s]100%|██████████| 11/11 [00:04<00:00,  2.55it/s]
+[16:25:51.952274] train dataset 4093
+[16:25:51.956094] validation dataset 4093
+[16:25:51.958593] test dataset 2673 
+
+[16:25:52.949662] Model = FutureINN(
+  (vit): UNet(
+    (map_noise): PositionalEmbedding()
+    (map_layer0): Linear()
+    (map_layer1): Linear()
+    (enc): ModuleDict(
+      (256x256_conv): Conv2d()
+      (256x256_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (256x256_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (128x128_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (128x128_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (64x64_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (64x64_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (32x32_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (32x32_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (16x16_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (16x16_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (16x16_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (8x8_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (8x8_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (8x8_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+    )
+    (low_res_inject): ModuleDict(
+      (64): Sequential(
+        (0): Conv2d(1, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): SiLU()
+        (2): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (3): GroupNorm()
+      )
+      (32): Sequential(
+        (0): Conv2d(1, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): SiLU()
+        (2): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (3): GroupNorm()
+      )
+    )
+    (dec): ModuleDict(
+      (8x8_in0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (norm2): GroupNorm()
+        (qkv): Conv2d()
+        (proj): Conv2d()
+      )
+      (8x8_in1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+      )
+      (8x8_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (8x8_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (8x8_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (16x16_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (32x32_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (64x64_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (128x128_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (256x256_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+    )
+    (low_res_out): ModuleDict(
+      (1): Sequential(
+        (0): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (1): GroupNorm()
+        (2): SiLU()
+        (3): Conv2d(128, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      )
+      (0): Sequential(
+        (0): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (1): GroupNorm()
+        (2): SiLU()
+        (3): Conv2d(128, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      )
+    )
+    (out_norm): GroupNorm()
+    (out_conv): Conv2d()
+  )
+  (ema_vit): UNet(
+    (map_noise): PositionalEmbedding()
+    (map_layer0): Linear()
+    (map_layer1): Linear()
+    (enc): ModuleDict(
+      (256x256_conv): Conv2d()
+      (256x256_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (256x256_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (128x128_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (128x128_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (64x64_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (64x64_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (32x32_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (32x32_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (16x16_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (16x16_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (16x16_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (8x8_down): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (8x8_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+      (8x8_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+      )
+    )
+    (low_res_inject): ModuleDict(
+      (64): Sequential(
+        (0): Conv2d(1, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): SiLU()
+        (2): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (3): GroupNorm()
+      )
+      (32): Sequential(
+        (0): Conv2d(1, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): SiLU()
+        (2): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (3): GroupNorm()
+      )
+    )
+    (dec): ModuleDict(
+      (8x8_in0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (norm2): GroupNorm()
+        (qkv): Conv2d()
+        (proj): Conv2d()
+      )
+      (8x8_in1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+      )
+      (8x8_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (8x8_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (8x8_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (16x16_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (16x16_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (32x32_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (32x32_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (64x64_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (64x64_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 64, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (128x128_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (128x128_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 32, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_up): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): Identity()
+        (fno): Identity()
+        (skip): Conv2d()
+      )
+      (256x256_block0): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_block1): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+      (256x256_block2): UNetBlock(
+        (norm0): GroupNorm()
+        (conv0): Conv2d()
+        (affine): Linear()
+        (norm1): GroupNorm()
+        (conv1): Conv2d()
+        (fno_norm): GroupNorm(16, 16, eps=1e-05, affine=False, bias=False)
+        (fno): SpectralConv2dSteerable()
+        (skip): Conv2d()
+      )
+    )
+    (low_res_out): ModuleDict(
+      (1): Sequential(
+        (0): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (1): GroupNorm()
+        (2): SiLU()
+        (3): Conv2d(128, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      )
+      (0): Sequential(
+        (0): UNetBlock(
+          (norm0): GroupNorm()
+          (conv0): Conv2d()
+          (norm1): GroupNorm()
+          (conv1): Conv2d()
+          (fno_norm): GroupNorm(16, 128, eps=1e-05, affine=False, bias=False)
+          (fno): SpectralConv2dSteerable()
+        )
+        (1): GroupNorm()
+        (2): SiLU()
+        (3): Conv2d(128, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+      )
+    )
+    (out_norm): GroupNorm()
+    (out_conv): Conv2d()
+  )
+)
+[16:25:52.965917] Number of trainable parameters: 36.669446M
+[16:25:53.031779] base lr: 6.25e-06
+[16:25:53.035314] actual lr: 5.00e-05
+[16:25:53.037260] effective batch size: 8
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/misc.py:251: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self._scaler = torch.cuda.amp.GradScaler()
+[16:25:53.175432] Training from scratch
+[16:25:53.176847] Start training for 1 epochs
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_mar.py:191: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+[16:26:26.872841] Epoch: [0]  [  0/511]  eta: 4:46:53  lr: 0.000000  loss: 6.3251 (6.3251)  high_loss: 3.9950 (3.9950)  mid_loss: 1.3978 (1.3978)  low_loss: 0.9324 (0.9324)  grad_norm: inf (inf)  time: 33.6857  data: 0.2492  max mem: 6822
+[16:26:29.218834] Epoch: [0]  [ 12/511]  eta: 0:23:02  lr: 0.000000  loss: 6.3319 (6.5525)  high_loss: 4.0193 (4.2437)  mid_loss: 1.3429 (1.3700)  low_loss: 0.9267 (0.9388)  grad_norm: 216.6148 (inf)  time: 2.7708  data: 0.0193  max mem: 6822
+[16:26:31.425853] Epoch: [0]  [ 24/511]  eta: 0:12:24  lr: 0.000000  loss: 6.8013 (6.6450)  high_loss: 4.5334 (4.3444)  mid_loss: 1.3232 (1.3518)  low_loss: 0.9864 (0.9488)  grad_norm: 211.6421 (inf)  time: 0.1895  data: 0.0001  max mem: 6822
+[16:26:33.651166] Epoch: [0]  [ 36/511]  eta: 0:08:39  lr: 0.000000  loss: 6.7997 (6.6471)  high_loss: 4.5700 (4.3791)  mid_loss: 1.3028 (1.3460)  low_loss: 0.9183 (0.9220)  grad_norm: 215.1252 (inf)  time: 0.1842  data: 0.0001  max mem: 6822
+[16:26:35.866051] Epoch: [0]  [ 48/511]  eta: 0:06:43  lr: 0.000000  loss: 6.6549 (6.5874)  high_loss: 4.5108 (4.3707)  mid_loss: 1.3015 (1.3296)  low_loss: 0.7980 (0.8870)  grad_norm: 223.6293 (inf)  time: 0.1845  data: 0.0001  max mem: 6822
+[16:26:38.065972] Epoch: [0]  [ 60/511]  eta: 0:05:31  lr: 0.000001  loss: 6.4413 (6.5797)  high_loss: 4.5643 (4.4264)  mid_loss: 1.1739 (1.2929)  low_loss: 0.7656 (0.8605)  grad_norm: 249.7646 (inf)  time: 0.1836  data: 0.0001  max mem: 6822
+[16:26:40.272898] Epoch: [0]  [ 72/511]  eta: 0:04:42  lr: 0.000001  loss: 6.2411 (6.4701)  high_loss: 4.4970 (4.3970)  mid_loss: 1.1055 (1.2536)  low_loss: 0.6554 (0.8195)  grad_norm: 255.1658 (inf)  time: 0.1832  data: 0.0001  max mem: 6822
+[16:26:42.497749] Epoch: [0]  [ 84/511]  eta: 0:04:07  lr: 0.000001  loss: 6.0564 (6.3841)  high_loss: 4.4970 (4.4014)  mid_loss: 0.9067 (1.2028)  low_loss: 0.5535 (0.7800)  grad_norm: 255.7734 (inf)  time: 0.1841  data: 0.0001  max mem: 6822
+[16:26:44.706477] Epoch: [0]  [ 96/511]  eta: 0:03:40  lr: 0.000001  loss: 5.5526 (6.2378)  high_loss: 4.4067 (4.3527)  mid_loss: 0.7665 (1.1419)  low_loss: 0.5126 (0.7432)  grad_norm: 266.9348 (inf)  time: 0.1837  data: 0.0001  max mem: 6822
+[16:26:46.902927] Epoch: [0]  [108/511]  eta: 0:03:18  lr: 0.000001  loss: 5.4288 (6.1388)  high_loss: 4.3718 (4.3494)  mid_loss: 0.6125 (1.0802)  low_loss: 0.4362 (0.7092)  grad_norm: 273.6105 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:26:49.110442] Epoch: [0]  [120/511]  eta: 0:03:00  lr: 0.000001  loss: 5.2875 (6.0282)  high_loss: 4.3409 (4.3306)  mid_loss: 0.5255 (1.0226)  low_loss: 0.3910 (0.6751)  grad_norm: 279.5121 (inf)  time: 0.1835  data: 0.0001  max mem: 6822
+[16:26:51.306369] Epoch: [0]  [132/511]  eta: 0:02:45  lr: 0.000001  loss: 5.0635 (5.9341)  high_loss: 4.2917 (4.3184)  mid_loss: 0.4867 (0.9735)  low_loss: 0.3090 (0.6422)  grad_norm: 263.0887 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:26:53.503712] Epoch: [0]  [144/511]  eta: 0:02:32  lr: 0.000001  loss: 5.0635 (5.8393)  high_loss: 4.2766 (4.2932)  mid_loss: 0.4808 (0.9332)  low_loss: 0.3013 (0.6130)  grad_norm: 276.1882 (inf)  time: 0.1829  data: 0.0001  max mem: 6822
+[16:26:55.707612] Epoch: [0]  [156/511]  eta: 0:02:21  lr: 0.000002  loss: 5.0000 (5.7728)  high_loss: 4.2256 (4.2849)  mid_loss: 0.5158 (0.9017)  low_loss: 0.2755 (0.5862)  grad_norm: 281.7586 (inf)  time: 0.1832  data: 0.0001  max mem: 6822
+[16:26:57.911787] Epoch: [0]  [168/511]  eta: 0:02:11  lr: 0.000002  loss: 4.9382 (5.7062)  high_loss: 4.1845 (4.2697)  mid_loss: 0.5070 (0.8726)  low_loss: 0.2804 (0.5639)  grad_norm: 278.6411 (inf)  time: 0.1837  data: 0.0001  max mem: 6822
+[16:27:00.119782] Epoch: [0]  [180/511]  eta: 0:02:02  lr: 0.000002  loss: 4.8412 (5.6517)  high_loss: 4.1373 (4.2628)  mid_loss: 0.4766 (0.8454)  low_loss: 0.2608 (0.5435)  grad_norm: 271.0419 (inf)  time: 0.1836  data: 0.0001  max mem: 6822
+[16:27:02.319998] Epoch: [0]  [192/511]  eta: 0:01:54  lr: 0.000002  loss: 4.8205 (5.5886)  high_loss: 4.1303 (4.2453)  mid_loss: 0.4203 (0.8192)  low_loss: 0.2474 (0.5242)  grad_norm: 252.0269 (inf)  time: 0.1836  data: 0.0001  max mem: 6822
+[16:27:04.524970] Epoch: [0]  [204/511]  eta: 0:01:46  lr: 0.000002  loss: 4.4237 (5.5083)  high_loss: 3.8348 (4.2085)  mid_loss: 0.4087 (0.7945)  low_loss: 0.2104 (0.5052)  grad_norm: 215.8636 (inf)  time: 0.1835  data: 0.0001  max mem: 6822
+[16:27:06.720526] Epoch: [0]  [216/511]  eta: 0:01:39  lr: 0.000002  loss: 4.2543 (5.4391)  high_loss: 3.7310 (4.1808)  mid_loss: 0.3829 (0.7700)  low_loss: 0.1846 (0.4884)  grad_norm: 207.5893 (inf)  time: 0.1832  data: 0.0001  max mem: 6822
+[16:27:08.914536] Epoch: [0]  [228/511]  eta: 0:01:33  lr: 0.000002  loss: 4.1193 (5.3563)  high_loss: 3.6269 (4.1369)  mid_loss: 0.3350 (0.7468)  low_loss: 0.1881 (0.4726)  grad_norm: 207.5893 (inf)  time: 0.1829  data: 0.0001  max mem: 6822
+[16:27:11.102697] Epoch: [0]  [240/511]  eta: 0:01:27  lr: 0.000002  loss: 4.0690 (5.2943)  high_loss: 3.5763 (4.1104)  mid_loss: 0.3289 (0.7262)  low_loss: 0.1724 (0.4578)  grad_norm: 203.7253 (inf)  time: 0.1824  data: 0.0001  max mem: 6822
+[16:27:13.298295] Epoch: [0]  [252/511]  eta: 0:01:21  lr: 0.000002  loss: 4.0690 (5.2326)  high_loss: 3.5763 (4.0808)  mid_loss: 0.3377 (0.7084)  low_loss: 0.1585 (0.4434)  grad_norm: 199.5846 (inf)  time: 0.1826  data: 0.0001  max mem: 6822
+[16:27:15.492349] Epoch: [0]  [264/511]  eta: 0:01:16  lr: 0.000003  loss: 3.8862 (5.1605)  high_loss: 3.3928 (4.0389)  mid_loss: 0.3290 (0.6906)  low_loss: 0.1559 (0.4310)  grad_norm: 191.0521 (inf)  time: 0.1828  data: 0.0001  max mem: 6822
+[16:27:17.690328] Epoch: [0]  [276/511]  eta: 0:01:11  lr: 0.000003  loss: 3.4018 (5.0861)  high_loss: 2.9086 (3.9934)  mid_loss: 0.2943 (0.6733)  low_loss: 0.1660 (0.4193)  grad_norm: 172.3408 (inf)  time: 0.1830  data: 0.0001  max mem: 6822
+[16:27:19.894030] Epoch: [0]  [288/511]  eta: 0:01:06  lr: 0.000003  loss: 3.5219 (5.0158)  high_loss: 3.0995 (3.9502)  mid_loss: 0.2926 (0.6578)  low_loss: 0.1481 (0.4078)  grad_norm: 172.3408 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:22.104389] Epoch: [0]  [300/511]  eta: 0:01:02  lr: 0.000003  loss: 3.5146 (4.9513)  high_loss: 3.0705 (3.9112)  mid_loss: 0.2873 (0.6429)  low_loss: 0.1370 (0.3971)  grad_norm: 178.1987 (inf)  time: 0.1839  data: 0.0001  max mem: 6822
+[16:27:24.309290] Epoch: [0]  [312/511]  eta: 0:00:57  lr: 0.000003  loss: 3.3127 (4.8892)  high_loss: 2.9213 (3.8734)  mid_loss: 0.2767 (0.6290)  low_loss: 0.1346 (0.3868)  grad_norm: 166.7862 (inf)  time: 0.1837  data: 0.0001  max mem: 6822
+[16:27:26.520891] Epoch: [0]  [324/511]  eta: 0:00:53  lr: 0.000003  loss: 3.2940 (4.8240)  high_loss: 2.8958 (3.8311)  mid_loss: 0.2828 (0.6161)  low_loss: 0.1253 (0.3767)  grad_norm: 164.5762 (inf)  time: 0.1840  data: 0.0001  max mem: 6822
+[16:27:28.716871] Epoch: [0]  [336/511]  eta: 0:00:49  lr: 0.000003  loss: 3.0255 (4.7612)  high_loss: 2.6516 (3.7899)  mid_loss: 0.2677 (0.6035)  low_loss: 0.1220 (0.3678)  grad_norm: 155.5478 (inf)  time: 0.1835  data: 0.0001  max mem: 6822
+[16:27:30.914577] Epoch: [0]  [348/511]  eta: 0:00:45  lr: 0.000003  loss: 2.9035 (4.6943)  high_loss: 2.5328 (3.7432)  mid_loss: 0.2538 (0.5917)  low_loss: 0.1255 (0.3593)  grad_norm: 152.1456 (inf)  time: 0.1828  data: 0.0001  max mem: 6822
+[16:27:33.117514] Epoch: [0]  [360/511]  eta: 0:00:41  lr: 0.000004  loss: 2.7932 (4.6269)  high_loss: 2.4167 (3.6956)  mid_loss: 0.2538 (0.5800)  low_loss: 0.1151 (0.3514)  grad_norm: 150.7681 (inf)  time: 0.1833  data: 0.0001  max mem: 6822
+[16:27:35.315835] Epoch: [0]  [372/511]  eta: 0:00:38  lr: 0.000004  loss: 2.6358 (4.5609)  high_loss: 2.2674 (3.6482)  mid_loss: 0.2366 (0.5691)  low_loss: 0.1151 (0.3437)  grad_norm: 136.1796 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:37.514485] Epoch: [0]  [384/511]  eta: 0:00:34  lr: 0.000004  loss: 2.4703 (4.4929)  high_loss: 2.1318 (3.5980)  mid_loss: 0.2382 (0.5589)  low_loss: 0.1021 (0.3360)  grad_norm: 126.7768 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:39.708926] Epoch: [0]  [396/511]  eta: 0:00:30  lr: 0.000004  loss: 2.3355 (4.4254)  high_loss: 2.0175 (3.5475)  mid_loss: 0.2283 (0.5489)  low_loss: 0.1041 (0.3289)  grad_norm: 114.9281 (inf)  time: 0.1829  data: 0.0001  max mem: 6822
+[16:27:41.900901] Epoch: [0]  [408/511]  eta: 0:00:27  lr: 0.000004  loss: 2.2278 (4.3599)  high_loss: 1.9086 (3.4985)  mid_loss: 0.2237 (0.5392)  low_loss: 0.1007 (0.3222)  grad_norm: 103.4591 (inf)  time: 0.1827  data: 0.0001  max mem: 6822
+[16:27:44.104232] Epoch: [0]  [420/511]  eta: 0:00:23  lr: 0.000004  loss: 2.0645 (4.2916)  high_loss: 1.7457 (3.4458)  mid_loss: 0.2238 (0.5302)  low_loss: 0.0915 (0.3156)  grad_norm: 97.0958 (inf)  time: 0.1832  data: 0.0001  max mem: 6822
+[16:27:46.301962] Epoch: [0]  [432/511]  eta: 0:00:20  lr: 0.000004  loss: 1.9605 (4.2237)  high_loss: 1.6479 (3.3928)  mid_loss: 0.2240 (0.5215)  low_loss: 0.0855 (0.3093)  grad_norm: 87.9540 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:48.506060] Epoch: [0]  [444/511]  eta: 0:00:17  lr: 0.000004  loss: 1.8886 (4.1598)  high_loss: 1.5725 (3.3432)  mid_loss: 0.2137 (0.5133)  low_loss: 0.0828 (0.3033)  grad_norm: 84.4229 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:50.705457] Epoch: [0]  [456/511]  eta: 0:00:14  lr: 0.000004  loss: 1.7773 (4.0969)  high_loss: 1.4849 (3.2942)  mid_loss: 0.2101 (0.5050)  low_loss: 0.0891 (0.2977)  grad_norm: 75.6661 (inf)  time: 0.1831  data: 0.0001  max mem: 6822
+[16:27:52.902468] Epoch: [0]  [468/511]  eta: 0:00:10  lr: 0.000005  loss: 1.7717 (4.0349)  high_loss: 1.4808 (3.2456)  mid_loss: 0.1941 (0.4969)  low_loss: 0.0893 (0.2924)  grad_norm: 72.3413 (inf)  time: 0.1829  data: 0.0001  max mem: 6822
+[16:27:55.100791] Epoch: [0]  [480/511]  eta: 0:00:07  lr: 0.000005  loss: 1.5512 (3.9736)  high_loss: 1.2800 (3.1972)  mid_loss: 0.1885 (0.4893)  low_loss: 0.0849 (0.2871)  grad_norm: 65.9625 (inf)  time: 0.1830  data: 0.0001  max mem: 6822
+[16:27:57.294128] Epoch: [0]  [492/511]  eta: 0:00:04  lr: 0.000005  loss: 1.6043 (3.9164)  high_loss: 1.3187 (3.1522)  mid_loss: 0.1912 (0.4821)  low_loss: 0.0775 (0.2821)  grad_norm: 67.6070 (inf)  time: 0.1829  data: 0.0001  max mem: 6822
+[16:27:59.498371] Epoch: [0]  [504/511]  eta: 0:00:01  lr: 0.000005  loss: 1.5573 (3.8598)  high_loss: 1.2780 (3.1075)  mid_loss: 0.1912 (0.4750)  low_loss: 0.0811 (0.2773)  grad_norm: 66.0397 (inf)  time: 0.1826  data: 0.0001  max mem: 6822
+[16:28:00.575735] Epoch: [0]  [510/511]  eta: 0:00:00  lr: 0.000005  loss: 1.5243 (3.8315)  high_loss: 1.2612 (3.0851)  mid_loss: 0.1912 (0.4716)  low_loss: 0.0775 (0.2749)  grad_norm: 65.3597 (inf)  time: 0.1814  data: 0.0001  max mem: 6822
+[16:28:00.696231] Epoch: [0] Total time: 0:02:07 (0.2495 s / it)
+/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[16:28:00.700952] Averaged stats: lr: 0.000005  loss: 1.5243 (3.8315)  high_loss: 1.2612 (3.0851)  mid_loss: 0.1912 (0.4716)  low_loss: 0.0775 (0.2749)  grad_norm: 65.3597 (inf)
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_mar.py:43: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+[16:28:19.763688] Training time 0:02:26

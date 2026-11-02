@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""FNO L=1 high-field rollout MSE (separate from the HINE script).
+"""FNO high-field rollout MSE (separate from the HINE script).
 
 Integer-sorts eval *.mat files, takes every Nth by position, tiles non-overlapping
-horizon sections, and rolls FNO2d(high) in autoregressive and teacher-forced modes.
+horizon sections, and rolls FNO2d in autoregressive and teacher-forced modes.
+Supports 1-to-1, 2-to-2, and 3-to-3 maps (channel counts read from the checkpoint).
 Saves high-field predictions, ground truth, MSE arrays, field figures, and MSE curves.
 Does not import or modify eval_jacobian_manual_mse.py beyond shared data helpers.
 """
@@ -13,6 +14,10 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 import matplotlib
 
@@ -93,7 +98,15 @@ def load_fno(checkpoint_path: str, device: torch.device) -> FNO2d:
     modes = int(getattr(a, "modes", 96))
     width = int(getattr(a, "width", 32))
     n_layers = int(getattr(a, "n_layers", 3))
-    model = FNO2d(modes=modes, width=width, n_layers=n_layers).to(device)
+    in_steps = int(getattr(a, "in_steps", 1))
+    out_steps = int(getattr(a, "out_steps", 1))
+    model = FNO2d(
+        modes=modes,
+        width=width,
+        n_layers=n_layers,
+        in_channels=in_steps,
+        out_channels=out_steps,
+    ).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     for p in model.parameters():
@@ -110,31 +123,42 @@ def rollout_fno(
     net: FNO2d,
     frames_np: np.ndarray,
     batch_size: int,
-    n_steps: int,
+    n_in: int,
+    n_out: int,
     device: torch.device,
     teacher_forced: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """One-step high->high map. n_steps = horizon - 1."""
+    """Block map with time as channels. frames_np: (B, T, H, W).
+
+    Stores one lead per predicted frame as (B, leads, 1, H, W).
+    """
+    n_leads = ((frames_np.shape[1] - n_in) // n_out) * n_out
+    if n_leads < 1:
+        raise ValueError(
+            f"Need horizon > n_in and (horizon - n_in) >= n_out; "
+            f"got T={frames_np.shape[1]} n_in={n_in} n_out={n_out}"
+        )
     pred_high: list[np.ndarray] = []
     gt_high: list[np.ndarray] = []
     mse_high: list[np.ndarray] = []
     net.eval()
     for start in range(0, frames_np.shape[0], batch_size):
         batch = torch.from_numpy(frames_np[start : start + batch_size]).to(device)
-        batch = batch.unsqueeze(2)
         b = batch.shape[0]
-        high = batch[:, 0]
+        ctx = batch[:, :n_in]
         hs: list[torch.Tensor] = []
         gh: list[torch.Tensor] = []
-        eh = np.zeros((b, n_steps), dtype=np.float64)
-        for k in range(n_steps):
+        eh = np.zeros((b, n_leads), dtype=np.float64)
+        for t in range(0, n_leads, n_out):
             if teacher_forced:
-                high = batch[:, k]
-            high = net(high)
-            true_h = batch[:, k + 1]
-            eh[:, k] = spatial_mse(high, true_h)
-            hs.append(high.detach().float().cpu())
-            gh.append(true_h.detach().float().cpu())
+                ctx = batch[:, t : t + n_in]
+            pred = net(ctx)
+            true = batch[:, t + n_in : t + n_in + n_out]
+            for j in range(n_out):
+                eh[:, t + j] = spatial_mse(pred[:, j : j + 1], true[:, j : j + 1])
+                hs.append(pred[:, j : j + 1].detach().float().cpu())
+                gh.append(true[:, j : j + 1].detach().float().cpu())
+            ctx = pred
         pred_high.append(torch.stack(hs, 1).numpy())
         gt_high.append(torch.stack(gh, 1).numpy())
         mse_high.append(eh)
@@ -205,9 +229,7 @@ def main() -> None:
     if args.every_nth_field < 1:
         raise ValueError(f"every-nth-field must be >= 1, got {args.every_nth_field}")
     if args.horizon < 2:
-        raise ValueError(
-            f"horizon must be >= 2 (need n_steps = horizon - 1), got {args.horizon}"
-        )
+        raise ValueError(f"horizon must be >= 2, got {args.horizon}")
     if args.batch_size < 1:
         raise ValueError(f"batch-size must be >= 1, got {args.batch_size}")
 
@@ -237,14 +259,28 @@ def main() -> None:
     )
 
     net = load_fno(args.checkpoint, device)
+    n_in = int(net.in_channels)
+    n_out = int(net.out_channels)
+    if n_in != n_out:
+        raise ValueError(f"AR eval requires in_channels == out_channels, got {n_in}/{n_out}")
+    if args.horizon <= n_in:
+        raise ValueError(
+            f"horizon must be > n_in ({n_in}), got {args.horizon}"
+        )
+    if (args.horizon - n_in) % n_out != 0:
+        raise ValueError(
+            f"(horizon - n_in) must be divisible by n_out; "
+            f"got horizon={args.horizon} n_in={n_in} n_out={n_out}"
+        )
     n_params = sum(p.numel() for p in net.parameters())
     print(
         f"checkpoint={args.checkpoint} modes={net.modes} width={net.width} "
-        f"layers={net.n_layers} params={n_params / 1e6:.2f}M device={device}"
+        f"layers={net.n_layers} in={n_in} out={n_out} "
+        f"params={n_params / 1e6:.2f}M device={device}"
     )
 
     n_frames = len(trajectories[0])
-    n_steps = n_frames - 1
+    n_leads = ((n_frames - n_in) // n_out) * n_out
     frames_np = np.stack(
         [np.stack(traj, axis=0) for traj in trajectories], axis=0
     ).astype(np.float32) / np.float32(args.norm)
@@ -256,15 +292,16 @@ def main() -> None:
         for k in range(n_frames):
             kept_index[b, k] = start + k
             file_stem[b, k] = kept[start + k][0]
-    lead = np.arange(1, n_steps + 1, dtype=np.int64)
-    target_stem = file_stem[:, 1 : n_steps + 1]
-    target_kept_index = kept_index[:, 1 : n_steps + 1]
+    # Lead 1 = first predicted frame (index n_in in the section).
+    lead = np.arange(1, n_leads + 1, dtype=np.int64)
+    target_stem = file_stem[:, n_in : n_in + n_leads]
+    target_kept_index = kept_index[:, n_in : n_in + n_leads]
 
     ar_pred_high, gt_high, ar_mse_high = rollout_fno(
-        net, frames_np, args.batch_size, n_steps, device, teacher_forced=False
+        net, frames_np, args.batch_size, n_in, n_out, device, teacher_forced=False
     )
     tf_pred_high, _, tf_mse_high = rollout_fno(
-        net, frames_np, args.batch_size, n_steps, device, teacher_forced=True
+        net, frames_np, args.batch_size, n_in, n_out, device, teacher_forced=True
     )
 
     npz_path = os.path.join(args.save_dir, "rollout_mse.npz")
@@ -286,6 +323,8 @@ def main() -> None:
         horizon=np.asarray(args.horizon, dtype=np.int64),
         every_nth_field=np.asarray(args.every_nth_field, dtype=np.int64),
         norm=np.asarray(args.norm, dtype=np.float64),
+        in_steps=np.asarray(n_in, dtype=np.int64),
+        out_steps=np.asarray(n_out, dtype=np.int64),
         model_type=np.asarray("fno"),
     )
     print(
@@ -293,7 +332,7 @@ def main() -> None:
         f"lead1 high AR {ar_mse_high[:, 0].mean():.4g} TF {tf_mse_high[:, 0].mean():.4g}"
     )
 
-    plot_leads = [0, n_steps // 2, n_steps - 1]
+    plot_leads = [0, n_leads // 2, n_leads - 1]
     for b in range(ar_mse_high.shape[0]):
         for k in plot_leads:
             fig = field_figure(
