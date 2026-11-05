@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Train / eval FutureINNPlus (L>=3 with CLI latent_res). Does not modify main.py."""
+"""Train / eval FutureINNPlus (L>=2 via latent_res or hierarchy_L/ds_factors).
+
+Does not modify main.py.
+"""
 
 from __future__ import annotations
 
@@ -29,8 +32,21 @@ def get_args_parser():
         "--latent_res",
         nargs="+",
         type=int,
-        required=True,
-        help="K coarse grid sizes, finer to coarser, e.g. 64 32 8 for L=4",
+        default=None,
+        help="K coarse grid sizes, finer to coarser, e.g. 32 for L=2 or 32 8 for L=3",
+    )
+    parser.add_argument(
+        "--hierarchy_L",
+        type=int,
+        default=None,
+        help="Hierarchy depth L = K+1. Use with --ds_factors (length K = L-1).",
+    )
+    parser.add_argument(
+        "--ds_factors",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Downsample factors for each coarse, e.g. 8 for L=2 or 8 32 for L=3",
     )
     parser.add_argument(
         "--inject_res",
@@ -84,20 +100,67 @@ def get_args_parser():
 
 
 def finalize_args(args):
-    latent_res = [int(r) for r in args.latent_res]
+    img_size = int(args.img_size)
+    has_latent = args.latent_res is not None and len(args.latent_res) > 0
+    has_hier = args.hierarchy_L is not None or args.ds_factors is not None
+
+    if not has_latent and not has_hier:
+        raise ValueError(
+            "Provide --latent_res ... or both --hierarchy_L and --ds_factors"
+        )
+
+    latent_from_ds = None
+    if has_hier:
+        if args.hierarchy_L is None or args.ds_factors is None:
+            raise ValueError(
+                "--hierarchy_L and --ds_factors must be set together "
+                "(or use --latent_res alone)"
+            )
+        hierarchy_L = int(args.hierarchy_L)
+        ds_factors = [int(d) for d in args.ds_factors]
+        if hierarchy_L < 2:
+            raise ValueError(f"--hierarchy_L must be >= 2, got {hierarchy_L}")
+        if len(ds_factors) != hierarchy_L - 1:
+            raise ValueError(
+                f"--ds_factors length must be hierarchy_L-1={hierarchy_L - 1}, "
+                f"got {len(ds_factors)}"
+            )
+        for d in ds_factors:
+            if d < 1 or img_size % d != 0:
+                raise ValueError(
+                    f"img_size {img_size} must be divisible by ds_factor {d}"
+                )
+        latent_from_ds = [img_size // d for d in ds_factors]
+
+    if has_latent:
+        latent_res = [int(r) for r in args.latent_res]
+        if latent_from_ds is not None and latent_res != latent_from_ds:
+            raise ValueError(
+                f"--latent_res {latent_res} disagrees with "
+                f"--hierarchy_L/--ds_factors -> {latent_from_ds}"
+            )
+        if args.hierarchy_L is not None and int(args.hierarchy_L) != len(latent_res) + 1:
+            raise ValueError(
+                f"--hierarchy_L {args.hierarchy_L} disagrees with "
+                f"len(latent_res)+1={len(latent_res) + 1}"
+            )
+    else:
+        latent_res = latent_from_ds
+
     if args.inject_res is None:
         inject_res = default_inject_res(latent_res)
     else:
         inject_res = [int(r) for r in args.inject_res]
-    validate_latent_args(args.img_size, latent_res, inject_res)
+    validate_latent_args(img_size, latent_res, inject_res)
     args.latent_res = latent_res
     args.inject_res = inject_res
     k = len(latent_res)
     args.num_of_frame = k + 2
-    args.ds_factor = args.img_size // latent_res[0]
-    args.ds_factor_low = args.img_size // latent_res[-1]
+    args.ds_factor = img_size // latent_res[0]
+    args.ds_factor_low = img_size // latent_res[-1]
     args.num_coarse = k
     args.hierarchy_L = k + 1
+    args.ds_factors = [img_size // r for r in latent_res]
     return args
 
 

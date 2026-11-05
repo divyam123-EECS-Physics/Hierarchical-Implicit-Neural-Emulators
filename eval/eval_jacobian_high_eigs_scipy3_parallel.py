@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Multi-GPU scipy_3 high-field Jacobian eigenvalue sweep.
+"""Multi-GPU scipy_3 Jacobian eigenvalue sweep on ground-truth inputs.
 
 Even-splits --n-initial-conditions sections via choose_sections (same as
 eval_jacobian_manual_mse.py), then runs one section per GPU. Each worker uses
 the scipy_3 ARPACK path (k=1, which=LM, JVP matvec) and saves eigenvalues plus
-eigenvectors every autoregressive frame.
+eigenvectors at each ground-truth staggered step (n_jac_steps = horizon - 2).
 
 Orchestrator:
   python eval_jacobian_high_eigs_scipy3_parallel.py --n-initial-conditions 4 --n-gpus 4
@@ -31,7 +31,7 @@ import numpy as np
 import scipy.sparse.linalg as spla
 import torch
 
-from eval_jacobian_high_eigs import pack_l3_state, unpack_l3_state
+from eval_jacobian_high_eigs import gt_l3_state, pack_l3_state, unpack_l3_state
 from eval_jacobian_manual_mse import (
     choose_sections,
     load_kept_paths,
@@ -104,8 +104,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--jacobian",
         choices=["high", "full"],
-        default="high",
-        help="high: next-high vs high (mid/low fixed). full: square map over (high,mid,low)",
+        default="full",
+        help="full (default): square map over (high,mid,low). high: next-high vs high (mid/low fixed)",
     )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
@@ -320,26 +320,16 @@ def run_worker(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    init_np = np.asarray(frames[0], dtype=np.float32)
-    high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
+    n_jac_steps = args.horizon - 2
+    if n_jac_steps < 1:
+        raise ValueError(
+            f"horizon must be >= 3 for ground-truth stagger "
+            f"(need high=k, mid=k+1, low=k+2), got {args.horizon}"
+        )
     dtype = next(ema_vit.parameters()).dtype
-    high = high.to(dtype)
-    b = high.shape[0]
-    mid0 = torch.zeros(
-        b, 1, model.ds_res, model.ds_res, device=device, dtype=high.dtype
+    high, mid, low = gt_l3_state(
+        frames, 0, model, device, dtype, args.norm
     )
-    low0 = torch.zeros(
-        b, 1, model.low_res, model.low_res, device=device, dtype=high.dtype
-    )
-    with torch.no_grad():
-        _, mid, _ = ema_vit(
-            high, mid0, low0, torch.zeros(b, device=device, dtype=high.dtype)
-        )
-        _, _, low = ema_vit(
-            high, mid, low0, torch.ones(b, device=device, dtype=high.dtype)
-        )
-    mid = mid.detach()
-    low = low.detach()
 
     if args.jacobian == "high":
         n = int(high.numel())
@@ -348,7 +338,7 @@ def run_worker(args: argparse.Namespace) -> None:
     jvp_s = time_one_jvp(ema_vit, high, mid, low, jacobian=args.jacobian)
     print(
         f"[section {section_id}] one_jvp_s={jvp_s:.4f} "
-        f"jacobian={args.jacobian} state_dim={n}",
+        f"jacobian={args.jacobian} state_dim={n} n_jac_steps={n_jac_steps}",
         flush=True,
     )
 
@@ -359,6 +349,8 @@ def run_worker(args: argparse.Namespace) -> None:
         f"section_index={args.section_index}",
         f"section_id={section_id}",
         f"horizon={args.horizon}",
+        f"n_jac_steps={n_jac_steps}",
+        "frame_rule=high=k mid=pool(k+1) low=pool(k+2)",
         f"state_dim={n}",
         f"one_jvp_s={jvp_s:.6f}",
         f"device={device}",
@@ -368,10 +360,10 @@ def run_worker(args: argparse.Namespace) -> None:
         f"tol={args.tol}",
     ]
 
-    t2 = 2 * torch.ones(b, device=device, dtype=high.dtype)
-    n_jac_steps = args.horizon
-
     for k in range(n_jac_steps):
+        high, mid, low = gt_l3_state(
+            frames, k, model, device, dtype, args.norm
+        )
         out_path = step_path(save_dir, k)
         print(
             f"[section {section_id}] step {k}: computing scipy eigs ...",
@@ -431,13 +423,6 @@ def run_worker(args: argparse.Namespace) -> None:
             f"step_{k}=ok radius={radius:.6g} wall_s={wall_s:.2f} "
             f"peak_gpu_mib={peak_mib:.1f}"
         )
-
-        if k + 1 < n_jac_steps:
-            with torch.no_grad():
-                high, mid, low = ema_vit(high, mid, low, t2)
-            high = high.detach()
-            mid = mid.detach()
-            low = low.detach()
 
     summary_path = save_dir / "summary.txt"
     summary_path.write_text("\n".join(summary_lines) + "\n")

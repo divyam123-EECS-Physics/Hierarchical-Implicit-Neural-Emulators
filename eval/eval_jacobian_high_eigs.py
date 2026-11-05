@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""High-field Jacobian eigenvalue stress test along one AR trajectory.
+"""Jacobian eigenvalue stress test on ground-truth staggered inputs.
 
-Sources only eval_jacobian_manual_mse.py (data / load_model / latent warmup /
-t=2 AR step) and jacobian_manual.ipynb (dense jacobian + matrix-free jvp/eigs).
+Sources only eval_jacobian_manual_mse.py (data / load_model) and
+jacobian_manual.ipynb (dense jacobian + matrix-free jvp/eigs).
 
-At each of --horizon autoregressive steps:
-  1) differentiate next high w.r.t. current high (mid/low fixed)
-  2) estimate largest-magnitude eigenvalues
-  3) save results
-  4) take a no-grad t=2 step and repeat
+At each step k of n_jac_steps = horizon - 2:
+  1) build high/mid/low from ground-truth frames (training full-step stagger)
+  2) differentiate the t=2 map (high-only or full packed state)
+  3) estimate largest-magnitude eigenvalues and save
+
+Linearization point matches model.py input_3:
+  high = frame k, mid = pool(frame k+1), low = pool(frame k+2).
 
 --method torch:  torch.autograd.functional.jacobian + torch.linalg.eigvals
 --method scipy:  jvp matvec + scipy.sparse.linalg.eigs (k=1, which=LM)
@@ -25,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse.linalg as spla
 import torch
+from torch.nn import functional as F
 
 from eval_jacobian_manual_mse import (
     choose_sections,
@@ -45,8 +48,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--jacobian",
         choices=["high", "full"],
-        default="high",
-        help="high: next-high vs high (mid/low fixed). full: square map over (high,mid,low)",
+        default="full",
+        help="full (default): square map over (high,mid,low). high: next-high vs high (mid/low fixed)",
     )
     p.add_argument(
         "--every-nth-field",
@@ -66,7 +69,7 @@ def parse_args() -> argparse.Namespace:
         "--horizon",
         type=int,
         default=20,
-        help="Number of AR steps / kept frames in the section",
+        help="Kept frames per section; n_jac_steps = horizon - 2",
     )
     p.add_argument(
         "--norm",
@@ -137,6 +140,50 @@ def pack_l3_state(high: torch.Tensor, mid: torch.Tensor, low: torch.Tensor) -> t
         [high.reshape(-1), mid.reshape(-1), low.reshape(-1)],
         dim=0,
     )
+
+
+def gt_l3_state(
+    frames: list,
+    step: int,
+    model,
+    device: torch.device,
+    dtype: torch.dtype,
+    norm: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Training full-step inputs: high=k, mid=pool(k+1), low=pool(k+2)."""
+    if step + 2 >= len(frames):
+        raise ValueError(
+            f"step {step} needs frames through {step + 2}, "
+            f"section has {len(frames)}"
+        )
+    high = (
+        torch.from_numpy(np.asarray(frames[step], dtype=np.float32))
+        .to(device=device, dtype=dtype)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        / norm
+    )
+    mid_src = (
+        torch.from_numpy(np.asarray(frames[step + 1], dtype=np.float32))
+        .to(device=device, dtype=dtype)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        / norm
+    )
+    low_src = (
+        torch.from_numpy(np.asarray(frames[step + 2], dtype=np.float32))
+        .to(device=device, dtype=dtype)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        / norm
+    )
+    mid = F.avg_pool2d(
+        mid_src, kernel_size=model.ds_factor, stride=model.ds_factor
+    )
+    low = F.avg_pool2d(
+        low_src, kernel_size=model.ds_factor_low, stride=model.ds_factor_low
+    )
+    return high.detach(), mid.detach(), low.detach()
 
 
 def unpack_l3_state(
@@ -363,27 +410,16 @@ def main() -> None:
         flush=True,
     )
 
-    # One-section IC, same as notebook / rollout warmup
-    init_np = np.asarray(frames[0], dtype=np.float32)
-    high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
+    n_jac_steps = args.horizon - 2
+    if n_jac_steps < 1:
+        raise ValueError(
+            f"horizon must be >= 3 for ground-truth stagger "
+            f"(need high=k, mid=k+1, low=k+2), got {args.horizon}"
+        )
     dtype = next(ema_vit.parameters()).dtype
-    high = high.to(dtype)
-    b = high.shape[0]
-    mid0 = torch.zeros(
-        b, 1, model.ds_res, model.ds_res, device=device, dtype=high.dtype
+    high, mid, low = gt_l3_state(
+        frames, 0, model, device, dtype, args.norm
     )
-    low0 = torch.zeros(
-        b, 1, model.low_res, model.low_res, device=device, dtype=high.dtype
-    )
-    with torch.no_grad():
-        _, mid, _ = ema_vit(
-            high, mid0, low0, torch.zeros(b, device=device, dtype=high.dtype)
-        )
-        _, _, low = ema_vit(
-            high, mid, low0, torch.ones(b, device=device, dtype=high.dtype)
-        )
-    mid = mid.detach()
-    low = low.detach()
 
     if args.jacobian == "high":
         n = int(high.numel())
@@ -392,6 +428,7 @@ def main() -> None:
     jvp_s = time_one_jvp(ema_vit, high, mid, low, jacobian=args.jacobian)
     print(
         f"one_jvp_s={jvp_s:.4f} jacobian={args.jacobian} "
+        f"n_jac_steps={n_jac_steps} "
         f"extrapolated_full_jacobian_s≈{jvp_s * n:.1f} "
         f"(n={n} reverse products) "
         f"extrapolated_scipy_eigs_s≈{jvp_s * args.maxiter:.1f} "
@@ -405,6 +442,8 @@ def main() -> None:
         f"checkpoint={args.checkpoint}",
         f"section={int(chosen[0])}",
         f"horizon={args.horizon}",
+        f"n_jac_steps={n_jac_steps}",
+        "frame_rule=high=k mid=pool(k+1) low=pool(k+2)",
         f"state_dim={n}",
         f"one_jvp_s={jvp_s:.6f}",
         f"device={device}",
@@ -413,11 +452,10 @@ def main() -> None:
         f"tol={args.tol}",
     ]
 
-    t2 = 2 * torch.ones(b, device=device, dtype=high.dtype)
-    # Jacobian at the IC (step 0), then after each of the next (horizon-1) AR advances.
-    n_jac_steps = args.horizon
-
     for k in range(n_jac_steps):
+        high, mid, low = gt_l3_state(
+            frames, k, model, device, dtype, args.norm
+        )
         out_path = step_path(save_dir, k)
         if args.skip_existing and out_path.is_file():
             print(f"step {k}: skip existing {out_path}", flush=True)
@@ -476,14 +514,6 @@ def main() -> None:
             f"step_{k}=ok radius={radius:.6g} wall_s={wall_s:.2f} "
             f"peak_gpu_mib={peak_mib:.1f}"
         )
-
-        # Advance AR state for next jacobian evaluation (no grad)
-        if k + 1 < n_jac_steps:
-            with torch.no_grad():
-                high, mid, low = ema_vit(high, mid, low, t2)
-            high = high.detach()
-            mid = mid.detach()
-            low = low.detach()
 
     summary_path = save_dir / "summary.txt"
     summary_path.write_text("\n".join(summary_lines) + "\n")

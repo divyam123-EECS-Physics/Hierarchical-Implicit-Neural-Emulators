@@ -207,6 +207,67 @@ def plot_mse_curves(save_dir: str, lead: np.ndarray, ar: dict, tf: dict, k: int)
     return out
 
 
+def consistency_mse_plus(
+    pred_high: np.ndarray,
+    pred_coarses: list[np.ndarray],
+    ds_factors: list[int],
+) -> list[np.ndarray]:
+    """Coarse i at step k vs pool(high at step k+1+i, ds_factors[i]).
+
+    Returns one array per coarse with shape [B, T-(1+i)].
+    """
+    high = torch.from_numpy(np.asarray(pred_high))
+    b, t = high.shape[:2]
+    out: list[np.ndarray] = []
+    for i, (pred_c, ds) in enumerate(zip(pred_coarses, ds_factors)):
+        lag = 1 + i
+        if t <= lag:
+            raise ValueError(
+                f"need T > {lag} for coarse {i} consistency, got T={t}"
+            )
+        coarse = torch.from_numpy(np.asarray(pred_c))
+        pooled = F.avg_pool2d(
+            high[:, lag:].reshape(-1, *high.shape[2:]),
+            kernel_size=ds,
+            stride=ds,
+        ).reshape(b, t - lag, *coarse.shape[2:])
+        consist = (
+            (coarse[:, : t - lag] - pooled)
+            .pow(2)
+            .mean(dim=(2, 3, 4))
+            .double()
+            .numpy()
+        )
+        out.append(consist)
+    return out
+
+
+def plot_consist_mse_curves(
+    save_dir: str,
+    lead: np.ndarray,
+    ar_consist: list[np.ndarray],
+    tf_consist: list[np.ndarray],
+) -> str:
+    k = len(ar_consist)
+    fig, axes = plt.subplots(k, 1, figsize=(7, 2.8 * k), sharex=False)
+    if k == 1:
+        axes = [axes]
+    for i, ax in enumerate(axes):
+        ar = ar_consist[i]
+        tf = tf_consist[i]
+        x = lead[: ar.shape[1]]
+        ax.semilogy(x, ar.mean(0), label=f"AR coarse{i}")
+        ax.semilogy(x, tf.mean(0), label=f"TF coarse{i}")
+        ax.set_ylabel("consistency MSE")
+        ax.legend()
+    axes[-1].set_xlabel("lead (latent step)")
+    out = os.path.join(save_dir, "consist_mse_vs_lead.png")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
 def main() -> None:
     args = parse_args()
     if args.every_nth_field < 1:
@@ -274,6 +335,17 @@ def main() -> None:
         ema_vit, model, frames_np, args.batch_size, n_steps, device, teacher_forced=True
     )
 
+    ar_consist = consistency_mse_plus(
+        ar["pred_high"],
+        [ar[f"pred_coarse_{i}"] for i in range(k)],
+        list(model.ds_factors),
+    )
+    tf_consist = consistency_mse_plus(
+        tf["pred_high"],
+        [tf[f"pred_coarse_{i}"] for i in range(k)],
+        list(model.ds_factors),
+    )
+
     npz_path = os.path.join(args.save_dir, "rollout_mse.npz")
     payload = {
         "ar_pred_high": ar["pred_high"],
@@ -301,23 +373,37 @@ def main() -> None:
         payload[f"gt_coarse_{i}"] = ar[f"gt_coarse_{i}"]
         payload[f"ar_mse_coarse_{i}"] = ar[f"mse_coarse_{i}"]
         payload[f"tf_mse_coarse_{i}"] = tf[f"mse_coarse_{i}"]
+        payload[f"ar_consist_coarse_{i}"] = ar_consist[i]
+        payload[f"tf_consist_coarse_{i}"] = tf_consist[i]
     # Paper-style aliases when K>=2
     if k >= 1:
         payload["ar_pred_mid"] = ar["pred_coarse_0"]
         payload["ar_mse_mid"] = ar["mse_coarse_0"]
         payload["gt_mid"] = ar["gt_coarse_0"]
+        payload["ar_consist_mid"] = ar_consist[0]
+        payload["tf_consist_mid"] = tf_consist[0]
     if k >= 2:
         payload["ar_pred_low"] = ar[f"pred_coarse_{k-1}"]
         payload["ar_mse_low"] = ar[f"mse_coarse_{k-1}"]
         payload["gt_low"] = ar[f"gt_coarse_{k-1}"]
+        payload["ar_consist_low"] = ar_consist[k - 1]
+        payload["tf_consist_low"] = tf_consist[k - 1]
 
     np.savez_compressed(npz_path, **payload)
+    consist_msg = " ".join(
+        f"c{i}={ar_consist[i][:, 0].mean():.4g}" for i in range(k)
+    )
     print(
         f"saved {npz_path}  B={ar['mse_high'].shape[0]} T={ar['mse_high'].shape[1]}  "
-        f"lead1 high AR {ar['mse_high'][:, 0].mean():.4g}"
+        f"lead1 high AR {ar['mse_high'][:, 0].mean():.4g}  "
+        f"consist AR {consist_msg}"
     )
     mse_plot = plot_mse_curves(args.save_dir, lead, ar, tf, k)
+    consist_plot = plot_consist_mse_curves(
+        args.save_dir, lead, ar_consist, tf_consist
+    )
     print(f"wrote {mse_plot}")
+    print(f"wrote {consist_plot}")
     print("JACOBIAN_MANUAL_MSE_PLUS_DONE")
 
 

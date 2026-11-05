@@ -1,0 +1,594 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Is HINE Implicit?</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of numbered sections; boxes only for stated results, assumptions and the first-step marker. */
+:root {
+  --bg: #f7f8f9;
+  --paper: #ffffff;
+  --ink: #18212b;
+  --muted: #586472;
+  --rule: #d9dee4;
+  --accent: #1f5f8b;
+  --accent-soft: #e6eff6;
+  --warn: #8a5a12;
+  --warn-soft: #f6efe2;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Literata", Georgia, "Times New Roman", serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --paper: #171e26; --ink: #e2e7ec; --muted: #9aa6b3; --rule: #2c3743;
+    --accent: #7fb6dd; --accent-soft: #1b2b3a; --warn: #e0b46a; --warn-soft: #2b2416; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --paper: #171e26; --ink: #e2e7ec; --muted: #9aa6b3; --rule: #2c3743;
+  --accent: #7fb6dd; --accent-soft: #1b2b3a; --warn: #e0b46a; --warn-soft: #2b2416; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 17px; line-height: 1.65;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 96px; }
+main { max-width: 46rem; margin: 0 auto; display: flex; flex-direction: column; gap: 2.8rem; }
+header { display: flex; flex-direction: column; gap: .6rem; border-bottom: 1px solid var(--rule); padding-bottom: 1.6rem; }
+.eyebrow { font-family: var(--f-display); text-transform: uppercase; letter-spacing: .09em; font-size: .78rem; color: var(--accent); font-weight: 600; }
+h1 { font-family: var(--f-display); font-weight: 600; font-size: 2.3rem; line-height: 1.1; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--f-display); font-weight: 600; font-size: 1.45rem; line-height: 1.2; margin: 0; text-wrap: balance; display: flex; gap: .7rem; align-items: baseline; }
+h2 .n { font-family: var(--f-mono); font-size: .95rem; color: var(--accent); font-weight: 500; }
+h3 { font-family: var(--f-display); font-weight: 600; font-size: 1.08rem; margin: .4rem 0 0; }
+p, ul, ol { margin: 0; }
+section { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.sub { color: var(--muted); }
+.box { background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.15rem; display: flex; flex-direction: column; gap: .7rem; min-width: 0; overflow-x: auto; }
+.box.result { border-left: 3px solid var(--accent); }
+.box.first { background: var(--accent-soft); border-color: var(--accent); }
+.box.caveat { background: var(--warn-soft); border-color: transparent; border-left: 3px solid var(--warn); }
+.tag { font-family: var(--f-display); text-transform: uppercase; letter-spacing: .08em; font-size: .74rem; font-weight: 600; color: var(--accent); }
+.caveat .tag { color: var(--warn); }
+.math { overflow-x: auto; overflow-y: hidden; min-width: 0; }
+mjx-container[display="true"] { margin: .5em 0 !important; }
+.tablewrap { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+th, td { text-align: left; vertical-align: top; padding: .5rem .6rem; border-bottom: 1px solid var(--rule); }
+th { font-family: var(--f-display); font-weight: 600; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+li + li { margin-top: .4rem; }
+ol, ul { padding-left: 1.3rem; }
+nav ol { columns: 2; column-gap: 2rem; font-size: .95rem; }
+@media (max-width: 560px) { nav ol { columns: 1; } h1 { font-size: 1.8rem; } body { font-size: 16px; } }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], tags: 'none',
+    macros: { R: '\\mathbb{R}', Tr: '\\operatorname{Tr}', E: '\\mathbb{E}' } },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js" defer></script>
+
+<main>
+<header>
+  <span class="eyebrow">Working derivation · written before any code</span>
+  <h1>Is HINE implicit, and where does its stability come from?</h1>
+  <p class="sub">The model studied here is the Hierarchical Implicit Neural Emulator (HINE) of Jiang et&nbsp;al., arXiv:2506.04528. The comparison framework is the step-size deck (injection and retention channels, Jacobian trace) and the eigenanalysis paper, arXiv:2608.16084. Every equation is numbered, and every equation is either derived where it appears or follows in one step from a numbered equation.</p>
+</header>
+
+<nav class="box">
+  <span class="tag">Sections</span>
+  <ol>
+    <li><a href="#s1">The question and the plan</a></li>
+    <li><a href="#s2">Notation and the true system</a></li>
+    <li><a href="#s3">The deck's framework, rederived</a></li>
+    <li><a href="#s4">The HINE update map</a></li>
+    <li><a href="#s5">Linearizing HINE</a></li>
+    <li><a href="#s6">What the training data determine</a></li>
+    <li><a href="#s7">On-graph and off-graph errors</a></li>
+    <li><a href="#s8">HINE in integration-constrained form</a></li>
+    <li><a href="#s9">The trace diagnostic for HINE</a></li>
+    <li><a href="#s10">Unrolled error and the retention channels</a></li>
+    <li><a href="#s11">What the training loss controls</a></li>
+    <li><a href="#s12">A scalar test problem</a></li>
+    <li><a href="#s13">What an implicit HINE would be</a></li>
+    <li><a href="#s14">Coarse-graining and synchronization</a></li>
+    <li><a href="#s15">Order of work</a></li>
+    <li><a href="#s16">Assumptions and limitations</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="s1">
+  <h2><span class="n">1</span>The question and the plan</h2>
+  <p>This note answers three questions about HINE.</p>
+  <ol>
+    <li>Is HINE an implicit time-stepping scheme in the numerical-analysis sense?</li>
+    <li>If it is not, how does its update map differ mathematically from an implicit scheme?</li>
+    <li>Which property of its coarse-graining could make its long rollouts stable?</li>
+  </ol>
+  <p>Section&nbsp;2 fixes notation. Section&nbsp;3 rederives the error framework of the step-size deck, so that every later quantity has a counterpart there. Section&nbsp;4 writes the HINE update map exactly and answers question&nbsp;1. Sections&nbsp;5 to 7 linearize HINE and change variables so that its Jacobian becomes block-triangular. Sections&nbsp;8 to 10 rewrite this result in the deck's integration-constrained form and derive HINE's trace diagnostic and retention channels. Section&nbsp;11 compares what HINE's loss controls with what a multi-step loss controls. Section&nbsp;12 checks the structure on a scalar test problem. Section&nbsp;13 constructs the implicit version of HINE and answers question&nbsp;2. Section&nbsp;14 addresses question&nbsp;3. Section&nbsp;15 gives the order of work, and Section&nbsp;16 lists the assumptions.</p>
+  <div class="box first">
+    <span class="tag">First theory step</span>
+    <p>Sections&nbsp;5 to 10 are the first piece of work. They produce the quantities that sit beside numbers the deck already has. These are the normalized trace of the effective tendency Jacobian, its split into a direct part and a coarse-future part, the trace of the parasitic block, and the injection and retention channels measured on rollouts. Table&nbsp;2 in Section&nbsp;10 lists them against their deck counterparts.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2><span class="n">2</span>Notation and the true system</h2>
+  <p>The state at time \(t_n=n\Delta t\) is the vorticity field on the grid, written as a vector \(u_n\in\R^N\). For a \(256\times256\) grid, \(N=256^2\). The true dynamics over one emulator step define the flow map \(\Phi\):</p>
+  <div class="math">$$u_{n+1}=\Phi(u_n). \tag{2.1}$$</div>
+  <p>The Jacobian of the flow map at \(u_n\) is the \(N\times N\) matrix \(\Phi'_n=\partial\Phi/\partial u\,(u_n)\). If the governing equation is \(\dot u=\mathcal F(u)\), then \(\Phi(u)=u+\Delta t\,\mathcal F(u)+O(\Delta t^2)\). Differentiating gives</p>
+  <div class="math">$$\Phi'_n=I+\Delta t\,L_n+O(\Delta t^2),\qquad L_n=\nabla\mathcal F(u_n), \tag{2.2}$$</div>
+  <p>where \(L_n\) is the tangent-linear operator of the equation at \(u_n\).</p>
+  <p>Coarse-graining is a linear restriction operator \(D:\R^N\to\R^M\). For average pooling with factor \(r\), each \(r\times r\) block of grid cells is replaced by its mean, so \(M=N/r^2\). With \(N=256^2\) and \(r=8\), the coarse field is \(32\times32\), so \(M=1024\). The prolongation \(D^+:\R^M\to\R^N\) copies each coarse value back into its \(r\times r\) block. Averaging a field that is constant on each block returns that field, so</p>
+  <div class="math">$$DD^+=I_M. \tag{2.3}$$</div>
+  <p>Define \(P=D^+D\) and \(Q=I-P\). From Eq.&nbsp;(2.3), \(P^2=D^+(DD^+)D=P\), so \(P\) is a projector. It maps a field to its block-averaged version. \(Pu\) is the coarse part of \(u\) and \(Qu\) is the fine part. Also \(DQ=D-DD^+D=D-D=0\), so the restriction of a fine field is zero.</p>
+  <p>The coarse grid with \(256/r\) points per side resolves wavenumbers up to its Nyquist value \(k_c=128/r\). This gives \(k_c=16\) for \(r=8\) and \(k_c=4\) for \(r=32\). For average pooling the separation in wavenumber is approximate, because the box filter leaks some energy across \(k_c\).</p>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2><span class="n">3</span>The deck's framework, rederived</h2>
+  <p>This section rederives the deck's error framework for a model without hierarchy, so that each HINE quantity in Sections&nbsp;8 to 10 has a stated counterpart.</p>
+
+  <h3>3.1 Model and one-step error</h3>
+  <p>An integration-constrained emulator with forward-Euler integration predicts a tendency \(H(u)\) with a network and advances the state as</p>
+  <div class="math">$$\hat u_{n+1}=\tilde G(\hat u_n),\qquad \tilde G(u)=u+\Delta t\,H(u). \tag{3.1}$$</div>
+  <p>Hats denote states produced by the model. The one-step error is the error the model makes when it starts from the true state:</p>
+  <div class="math">$$\varepsilon_n=\tilde G(u_n)-u_{n+1}. \tag{3.2}$$</div>
+  <p>The deck uses \(\|\varepsilon\|\propto\Delta t\), which holds because the model update and the true update both differ from \(u_n\) by terms proportional to \(\Delta t\).</p>
+
+  <h3>3.2 Error recursion</h3>
+  <p>Let \(e_n=\hat u_n-u_n\) be the rollout error. Expanding \(\tilde G\) about the true state gives \(\hat u_{n+1}=\tilde G(u_n+e_n)=\tilde G(u_n)+J_ne_n+O(\|e_n\|^2)\), with Jacobian \(J_n=\nabla\tilde G(u_n)=I+\Delta t\,\nabla H(u_n)\). Subtracting \(u_{n+1}\) and using Eq.&nbsp;(3.2):</p>
+  <div class="math">$$e_{n+1}=\varepsilon_n+J_ne_n,\qquad J_n=I+\Delta t\,\nabla H_n. \tag{3.3}$$</div>
+  <p>Eq.&nbsp;(3.3) drops terms of order \(\|e\|^2\). It holds while the rollout error is small.</p>
+
+  <h3>3.3 Unrolled error</h3>
+  <p>Starting from \(e_0=0\), Eq.&nbsp;(3.3) gives \(e_1=\varepsilon_0\), then \(e_2=\varepsilon_1+J_1\varepsilon_0\), and in general</p>
+  <div class="math">$$e_n=\sum_{i=0}^{n-1}\Big(\prod_{j=i+1}^{n-1}J_j\Big)\varepsilon_i, \tag{3.4}$$</div>
+  <p>where the product is ordered with later indices to the left, and an empty product equals \(I\). Each one-step error \(\varepsilon_i\) is injected once and then carried to time \(t_n\) by the Jacobians of all later steps.</p>
+
+  <h3>3.4 Injection and retention</h3>
+  <p>The deck separates Eq.&nbsp;(3.4) into the raw injected error and the part produced by the Jacobian products:</p>
+  <div class="math">$$I(t_n)=\Big\|\sum_{i=0}^{n-1}\varepsilon_i\Big\|,\qquad R(t_n)=\|e_n\|-I(t_n). \tag{3.5}$$</div>
+  <p>If every Jacobian were the identity, \(e_n\) would equal \(\sum_i\varepsilon_i\) and \(R\) would be zero. A negative \(R\) means the Jacobian products have reduced the norm of the injected errors.</p>
+
+  <h3>3.5 One-step change of the error norm</h3>
+  <p>Using Eq.&nbsp;(3.3) without the injection term, the squared norm after one step is</p>
+  <div class="math">$$\|J e\|^2=e^\top(I+\Delta t\nabla H)^\top(I+\Delta t\nabla H)\,e=\|e\|^2+\Delta t\,e^\top(\nabla H+\nabla H^\top)e+\Delta t^2\|\nabla H e\|^2. \tag{3.6}$$</div>
+  <p>A scalar equals its transpose, so \(e^\top\nabla H^\top e=e^\top\nabla H\,e\). Therefore</p>
+  <div class="math">$$\|Je\|^2=\|e\|^2+2\Delta t\,e^\top\nabla H\,e+O(\Delta t^2). \tag{3.7}$$</div>
+
+  <h3>3.6 From the quadratic form to the trace</h3>
+  <p>Write \(e=\|e\|\,v\) with \(v\) a unit vector. Assume that \(v\) is random with \(\E[vv^\top]=I/N\), which holds for a direction drawn uniformly from the sphere. This is the isotropy assumption. For any square matrix \(X\), \(v^\top Xv=\Tr(Xvv^\top)\). Taking the expectation:</p>
+  <div class="math">$$\E\big[e^\top\nabla H\,e\big]=\|e\|^2\,\Tr\!\big(\nabla H\,\E[vv^\top]\big)=\|e\|^2\,\frac{\Tr(\nabla H)}{N}. \tag{3.8}$$</div>
+  <p>Combining Eq.&nbsp;(3.7) and Eq.&nbsp;(3.8), a negative normalized trace \(\Tr(\nabla H)/N\) means that a randomly oriented error shrinks in expectation over one step. This is the deck's damping diagnostic. It does not hold for errors aligned with special directions of \(\nabla H\).</p>
+
+  <h3>3.7 Direct-step models</h3>
+  <p>HINE as published predicts the next state directly, so its Jacobian \(J\) is not close to \(I\) and Eq.&nbsp;(3.7) does not apply. The same isotropy argument applied to \(\|Je\|^2=e^\top J^\top Je\) gives</p>
+  <div class="math">$$\frac{\E\|Je\|^2}{\|e\|^2}=\frac{\Tr(J^\top J)}{N}=\frac{\|J\|_F^2}{N}, \tag{3.9}$$</div>
+  <p>where \(\|\cdot\|_F\) is the Frobenius norm. For \(J=I+\Delta t\nabla H\), \(\Tr(J^\top J)=N+2\Delta t\Tr(\nabla H)+\Delta t^2\|\nabla H\|_F^2\), so Eq.&nbsp;(3.9) reduces to \(1+2\Delta t\Tr(\nabla H)/N+O(\Delta t^2)\), consistent with Eq.&nbsp;(3.8). Eq.&nbsp;(3.9) is the diagnostic to use on the published direct-step HINE. Sections&nbsp;8 to 10 use the integration-constrained form, because there every HINE quantity has an exact deck counterpart.</p>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2><span class="n">4</span>The HINE update map</h2>
+  <h3>4.1 The published model</h3>
+  <p>With \(L\) levels, HINE (Eq.&nbsp;10 of arXiv:2506.04528) is</p>
+  <div class="math">$$\big(\hat u_{n+1},\hat z^{(1)}_{n+2},\ldots,\hat z^{(L-1)}_{n+L}\big)=f_\theta\big(u_n,z^{(1)}_{n+1},\ldots,z^{(L-1)}_{n+L-1}\big),\qquad z^{(\ell)}=\mathrm{DownSample}(u,r^\ell). \tag{4.1}$$</div>
+  <p>The model takes the current fine state and coarse versions of future states, and returns the next fine state and coarse versions of states further ahead. \(L=1\) is the plain autoregressive model. This note works with \(L=2\), which has one latent level with restriction \(D\). Section&nbsp;16 records that \(L=3\) has not yet been worked out.</p>
+
+  <h3>4.2 The two heads</h3>
+  <p>For \(L=2\), split \(f_\theta\) into the head \(g\) that returns the fine state and the head \(h\) that returns the latent:</p>
+  <div class="math">$$\hat u_{n+1}=g(\hat u_n,\hat z_{n+1}),\qquad \hat z_{n+2}=h(\hat u_n,\hat z_{n+1}). \tag{4.2}$$</div>
+  <p>The latent \(\hat z_{n+1}\in\R^M\) is meant to approximate \(Du_{n+1}\), the coarse version of the true state one step ahead.</p>
+
+  <h3>4.3 What is known when</h3>
+  <p>Table&nbsp;1 lists the inputs and outputs of three consecutive steps of Eq.&nbsp;(4.2).</p>
+  <div class="tablewrap"><table>
+    <tr><th>step</th><th>inputs</th><th>outputs</th></tr>
+    <tr><td>\(n-1\)</td><td>\(\hat u_{n-1},\ \hat z_n\)</td><td>\(\hat u_n,\ \hat z_{n+1}\)</td></tr>
+    <tr><td>\(n\)</td><td>\(\hat u_n,\ \hat z_{n+1}\)</td><td>\(\hat u_{n+1},\ \hat z_{n+2}\)</td></tr>
+    <tr><td>\(n+1\)</td><td>\(\hat u_{n+1},\ \hat z_{n+2}\)</td><td>\(\hat u_{n+2},\ \hat z_{n+3}\)</td></tr>
+  </table></div>
+  <p class="sub">Table&nbsp;1. Inputs and outputs of Eq.&nbsp;(4.2) over three steps.</p>
+  <p>The coarse future \(\hat z_{n+1}\) used at step \(n\) was computed at step \(n-1\), from \(\hat u_{n-1}\) and \(\hat z_n\). It is a value already in memory when step \(n\) begins.</p>
+
+  <h3>4.4 Training</h3>
+  <p>In training, both inputs are taken from the true trajectory, and so are both targets. The loss (Eq.&nbsp;12 of arXiv:2506.04528, with squared \(\ell_2\) distance) is</p>
+  <div class="math">$$\mathcal L_{\text{HINE}}=\big\|g(u_n,Du_{n+1})-u_{n+1}\big\|^2+\big\|h(u_n,Du_{n+1})-Du_{n+2}\big\|^2. \tag{4.3}$$</div>
+  <p>The latent input in training is therefore the true coarse future \(Du_{n+1}\). At inference it is the model's own earlier prediction \(\hat z_{n+1}\).</p>
+
+  <h3>4.5 HINE is explicit</h3>
+  <p>A time-stepping scheme is explicit if the new state is computed by evaluating functions of values already known. It is implicit if the new state is defined as the solution of an equation in which the new state appears on both sides. Backward Euler for \(\dot u=\mathcal F(u)\) is the standard implicit example:</p>
+  <div class="math">$$u_{n+1}=u_n+\Delta t\,\mathcal F(u_{n+1}). \tag{4.4}$$</div>
+  <p>Eq.&nbsp;(4.4) cannot be evaluated directly. It has to be solved for \(u_{n+1}\), for example by Newton or fixed-point iteration.</p>
+  <p>Substituting the second equation of Eq.&nbsp;(4.2), written for step \(n-1\), into the first gives</p>
+  <div class="math">$$\hat u_{n+1}=g\big(\hat u_n,\ h(\hat u_{n-1},\hat z_n)\big). \tag{4.5}$$</div>
+  <p>Every argument on the right of Eq.&nbsp;(4.5) is known when step \(n\) begins. No equation in \(\hat u_{n+1}\) is solved. By the definition above, HINE is explicit.</p>
+  <p>Eq.&nbsp;(4.5) also shows that \(\hat u_{n+1}\) depends on \(\hat u_n\) and \(\hat u_{n-1}\), and through \(\hat z_n\) on earlier states. A scheme whose update uses several past states is a multistep scheme. The two-step Adams–Bashforth method, \(u_{n+1}=u_n+\Delta t\big(\tfrac32\mathcal F(u_n)-\tfrac12\mathcal F(u_{n-1})\big)\), is the textbook explicit example. HINE belongs to this family. Its memory is held in the latent rather than in stored past states.</p>
+
+  <h3>4.6 The augmented state</h3>
+  <p>Collecting the fine state and the latent into one vector \(s_n=(\hat u_n,\hat z_{n+1})\in\R^{N+M}\), Eq.&nbsp;(4.2) becomes a one-step explicit map \(s_{n+1}=F(s_n)\) with \(F=(g,h)\). The stability of HINE is the stability of this map. It is governed by the \((N+M)\times(N+M)\) Jacobian of \(F\), not by the \(N\times N\) matrix \(\partial g/\partial u\) alone.</p>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2><span class="n">5</span>Linearizing HINE</h2>
+  <p>This section derives the HINE counterpart of Eq.&nbsp;(3.3).</p>
+  <h3>5.1 Errors</h3>
+  <p>Define the fine error and the latent error as</p>
+  <div class="math">$$e_n=\hat u_n-u_n\in\R^N,\qquad \eta_n=\hat z_{n+1}-Du_{n+1}\in\R^M. \tag{5.1}$$</div>
+  <p>The latent error \(\eta_n\) belongs to the latent used as input at step \(n\). It is measured against the true coarse future \(Du_{n+1}\) that the latent is meant to represent.</p>
+
+  <h3>5.2 Injected errors</h3>
+  <p>The errors that each head makes when both of its inputs are exact are</p>
+  <div class="math">$$\varepsilon^u_n=g(u_n,Du_{n+1})-u_{n+1},\qquad \varepsilon^z_n=h(u_n,Du_{n+1})-Du_{n+2}. \tag{5.2}$$</div>
+  <p>Comparing Eq.&nbsp;(5.2) with Eq.&nbsp;(4.3), these are the two residuals that the HINE loss penalizes.</p>
+
+  <h3>5.3 Jacobian blocks</h3>
+  <p>Evaluated at the exact inputs \((u_n,Du_{n+1})\), define</p>
+  <div class="math">$$A_n=\frac{\partial g}{\partial u}\in\R^{N\times N},\quad B_n=\frac{\partial g}{\partial z}\in\R^{N\times M},\quad C_n=\frac{\partial h}{\partial u}\in\R^{M\times N},\quad K_n=\frac{\partial h}{\partial z}\in\R^{M\times M}. \tag{5.3}$$</div>
+  <p>The subscript \(n\) is dropped below when only one step is involved.</p>
+
+  <h3>5.4 Derivation</h3>
+  <p>The model inputs at step \(n\) are \(\hat u_n=u_n+e_n\) and \(\hat z_{n+1}=Du_{n+1}+\eta_n\). Expanding \(g\) to first order about the exact inputs,</p>
+  <div class="math">$$\hat u_{n+1}=g(u_n,Du_{n+1})+Ae_n+B\eta_n=u_{n+1}+\varepsilon^u_n+Ae_n+B\eta_n, \tag{5.4}$$</div>
+  <p>where the second equality uses Eq.&nbsp;(5.2). Subtracting \(u_{n+1}\) gives \(e_{n+1}=Ae_n+B\eta_n+\varepsilon^u_n\). In the same way, \(\hat z_{n+2}=Du_{n+2}+\varepsilon^z_n+Ce_n+K\eta_n\). The latent error at step \(n+1\) is \(\eta_{n+1}=\hat z_{n+2}-Du_{n+2}\), so \(\eta_{n+1}=Ce_n+K\eta_n+\varepsilon^z_n\). In matrix form,</p>
+  <div class="math">$$\begin{pmatrix}e_{n+1}\\ \eta_{n+1}\end{pmatrix}=\begin{pmatrix}A_n&B_n\\ C_n&K_n\end{pmatrix}\begin{pmatrix}e_n\\ \eta_n\end{pmatrix}+\begin{pmatrix}\varepsilon^u_n\\ \varepsilon^z_n\end{pmatrix}. \tag{5.5}$$</div>
+  <p>Eq.&nbsp;(5.5) is the HINE counterpart of Eq.&nbsp;(3.3). Like Eq.&nbsp;(3.3), it drops second-order terms in the errors.</p>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+  <h2><span class="n">6</span>What the training data determine</h2>
+  <h3>6.1 The training inputs lie on a graph</h3>
+  <p>In training the latent input is always \(Du_{n+1}=D\Phi(u_n)\). It is a fixed function of the fine input. Every training input pair therefore lies on the set</p>
+  <div class="math">$$\mathcal G=\big\{\,(u,\ D\Phi(u))\,:\ u\in\R^N\big\}\subset\R^{N+M}. \tag{6.1}$$</div>
+  <p>\(\mathcal G\) is the graph of the function \(u\mapsto D\Phi(u)\). It is an \(N\)-dimensional surface inside the \((N+M)\)-dimensional input space of \(g\) and \(h\). The heads are trained only at points of \(\mathcal G\).</p>
+
+  <h3>6.2 The fit fixes only total derivatives</h3>
+  <p>Restricted to \(\mathcal G\), each head becomes a function of \(u\) alone:</p>
+  <div class="math">$$\tilde g(u)=g\big(u,D\Phi(u)\big),\qquad \tilde h(u)=h\big(u,D\Phi(u)\big). \tag{6.2}$$</div>
+  <p>The loss in Eq.&nbsp;(4.3) asks for \(\tilde g(u_n)\approx\Phi(u_n)\) and \(\tilde h(u_n)\approx D\Phi(\Phi(u_n))\). Assume that the fit also holds for first derivatives, up to errors that we name (Assumption&nbsp;A2 in Section&nbsp;16). By the chain rule, \(\nabla\tilde g=A+B\,D\Phi'_n\) and \(\nabla\tilde h=C+K\,D\Phi'_n\). The derivative of the target \(D\Phi(\Phi(u))\) at \(u_n\) is \(D\Phi'_{n+1}\Phi'_n\). Define the Jacobian fit errors by</p>
+  <div class="math">$$\Delta^g_n=A_n+B_nD\Phi'_n-\Phi'_n,\qquad \Delta^h_n=C_n+K_nD\Phi'_n-D\Phi'_{n+1}\Phi'_n. \tag{6.3}$$</div>
+  <p>Eq.&nbsp;(6.3) is a definition and holds exactly. A good fit means that \(\Delta^g\) and \(\Delta^h\) are small.</p>
+
+  <h3>6.3 The split between the inputs is not determined</h3>
+  <p>Let \(\chi:\R^M\to\R^N\) be any smooth function with \(\chi(0)=0\), and define \(g_\chi(u,z)=g(u,z)+\chi\big(z-D\Phi(u)\big)\). On \(\mathcal G\) the argument of \(\chi\) is zero, so \(g_\chi=g\) at every training input and the loss in Eq.&nbsp;(4.3) is unchanged. The Jacobian blocks change, however. With \(X=\nabla\chi(0)\), \(B\) becomes \(B+X\) and \(A\) becomes \(A-XD\Phi'_n\). The sum \(A+BD\Phi'_n\) is unchanged.</p>
+  <p>The data therefore fix the total derivative \(A+BD\Phi'\), but not how it is divided between dependence on the current state \(A\) and dependence on the coarse future \(B\). The same holds for \(C\) and \(K\). The division is set by the architecture and by optimization. It matters at inference, where the latent input is the model's own prediction and is not on \(\mathcal G\).</p>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2><span class="n">7</span>On-graph and off-graph errors</h2>
+  <p>This section changes variables in Eq.&nbsp;(5.5) so that the part fixed by the data and the part left free by Section&nbsp;6.3 appear in separate blocks.</p>
+
+  <h3>7.1 The consistent latent error</h3>
+  <p>Suppose the model's fine state is \(u_n+e_n\) and its latent is exactly consistent with that state, so that the latent equals \(D\Phi(u_n+e_n)\). To first order this is \(Du_{n+1}+D\Phi'_ne_n\). The latent error of a consistent pair is therefore \(D\Phi'_ne_n\). The part of the latent error that is not explained by the fine error is the off-graph error</p>
+  <div class="math">$$\nu_n=\eta_n-D\Phi'_n\,e_n. \tag{7.1}$$</div>
+  <p>The pair \((e_n,\nu_n)\) carries the same information as \((e_n,\eta_n)\), because Eq.&nbsp;(7.1) can be inverted as \(\eta_n=\nu_n+D\Phi'_ne_n\).</p>
+
+  <h3>7.2 The fine-error row</h3>
+  <p>Substitute \(\eta_n=\nu_n+D\Phi'_ne_n\) into the first row of Eq.&nbsp;(5.5):</p>
+  <div class="math">$$e_{n+1}=Ae_n+B\big(\nu_n+D\Phi'_ne_n\big)+\varepsilon^u_n=\big(A+BD\Phi'_n\big)e_n+B\nu_n+\varepsilon^u_n. \tag{7.2}$$</div>
+  <p>By Eq.&nbsp;(6.3), \(A+BD\Phi'_n=\Phi'_n+\Delta^g_n\). Hence</p>
+  <div class="math">$$e_{n+1}=\big(\Phi'_n+\Delta^g_n\big)e_n+B\nu_n+\varepsilon^u_n. \tag{7.3}$$</div>
+
+  <h3>7.3 The off-graph row</h3>
+  <p>By Eq.&nbsp;(7.1) at step \(n+1\), \(\nu_{n+1}=\eta_{n+1}-D\Phi'_{n+1}e_{n+1}\). The second row of Eq.&nbsp;(5.5) with the same substitution gives</p>
+  <div class="math">$$\eta_{n+1}=\big(C+KD\Phi'_n\big)e_n+K\nu_n+\varepsilon^z_n=\big(D\Phi'_{n+1}\Phi'_n+\Delta^h_n\big)e_n+K\nu_n+\varepsilon^z_n, \tag{7.4}$$</div>
+  <p>using Eq.&nbsp;(6.3) for the second equality. Multiplying Eq.&nbsp;(7.3) by \(D\Phi'_{n+1}\) gives</p>
+  <div class="math">$$D\Phi'_{n+1}e_{n+1}=\big(D\Phi'_{n+1}\Phi'_n+D\Phi'_{n+1}\Delta^g_n\big)e_n+D\Phi'_{n+1}B\nu_n+D\Phi'_{n+1}\varepsilon^u_n. \tag{7.5}$$</div>
+  <p>Subtracting Eq.&nbsp;(7.5) from Eq.&nbsp;(7.4), the terms \(D\Phi'_{n+1}\Phi'_ne_n\) cancel, and</p>
+  <div class="math">$$\nu_{n+1}=\big(\Delta^h_n-D\Phi'_{n+1}\Delta^g_n\big)e_n+\big(K-D\Phi'_{n+1}B\big)\nu_n+\big(\varepsilon^z_n-D\Phi'_{n+1}\varepsilon^u_n\big). \tag{7.6}$$</div>
+
+  <h3>7.4 Result</h3>
+  <div class="box result">
+    <span class="tag">Result 1 · block-triangular form</span>
+    <p>Combining Eq.&nbsp;(7.3) and Eq.&nbsp;(7.6),</p>
+    <div class="math">$$\begin{pmatrix}e_{n+1}\\ \nu_{n+1}\end{pmatrix}=\underbrace{\begin{pmatrix}\Phi'_n+\Delta^g_n & B_n\\ \Delta^h_n-D\Phi'_{n+1}\Delta^g_n & S_n\end{pmatrix}}_{T_n}\begin{pmatrix}e_n\\ \nu_n\end{pmatrix}+\begin{pmatrix}\varepsilon^u_n\\ \xi_n\end{pmatrix}, \tag{7.7}$$</div>
+    <div class="math">$$S_n=K_n-D\Phi'_{n+1}B_n,\qquad \xi_n=\varepsilon^z_n-D\Phi'_{n+1}\varepsilon^u_n. \tag{7.8}$$</div>
+    <p>The lower-left block contains only the fit errors \(\Delta^g\) and \(\Delta^h\). It vanishes when the fit is exact.</p>
+  </div>
+
+  <h3>7.5 Reading each block</h3>
+  <ul>
+    <li><strong>Upper-left, \(\Phi'_n+\Delta^g_n\).</strong> This block carries a fine error forward when the latent is consistent with the fine state. It is the true tangent map plus the fit error. An \(L=1\) model with the same fit error has the same block. The hierarchy affects this block only through the value that \(\Delta^g\) takes after training.</li>
+    <li><strong>Upper-right, \(B_n\).</strong> An off-graph latent error enters the fine state through the sensitivity of \(g\) to its latent input.</li>
+    <li><strong>Lower-left.</strong> A fine error creates an off-graph latent error only through the fit errors.</li>
+    <li><strong>Lower-right, \(S_n\).</strong> This block carries an off-graph latent error forward. It contains \(K\) and \(B\) separately, so by Section&nbsp;6.3 it is not determined by the data.</li>
+    <li><strong>Injection \(\xi_n\).</strong> The off-graph injection is the latent head's error minus the coarse-future image of the fine head's error. It measures how inconsistent the two heads are with each other.</li>
+  </ul>
+
+  <h3>7.6 Spectrum</h3>
+  <p>If the lower-left block is zero, \(T_n\) is block upper-triangular. The determinant of a block-triangular matrix is the product of the determinants of its diagonal blocks, so \(\det(T_n-\lambda I)=\det(\Phi'_n+\Delta^g_n-\lambda I)\,\det(S_n-\lambda I)\). The eigenvalues of \(T_n\) are then the eigenvalues of the physical block together with those of \(S_n\). A product of block upper-triangular matrices is block upper-triangular, and its diagonal blocks are the products of the diagonal blocks. The same separation therefore holds for the product of Jacobians along a rollout. When the lower-left block is small but not zero, the separation holds approximately.</p>
+  <p>In the theory of linear multistep methods, the scheme applied to \(\dot u=\mu u\) has one principal root that approximates \(e^{\mu\Delta t}\) and further parasitic roots that do not approximate the solution. The scheme is zero-stable only if the parasitic roots lie in the closed unit disk. \(S_n\) plays the role of the parasitic roots for HINE. HINE requires \(\rho(S_n)\lt1\), or the corresponding condition on products of \(S_n\) along a rollout, in addition to whatever the physical block requires. Section&nbsp;12 computes the parasitic root on a scalar example.</p>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+  <h2><span class="n">8</span>HINE in integration-constrained form</h2>
+  <p>This section writes Result&nbsp;1 in the form of Eq.&nbsp;(3.1), so that each block can be compared with the deck's \(I+\Delta t\nabla H\). The published HINE is direct-step. The integration-constrained form below is a variant introduced for this comparison.</p>
+
+  <h3>8.1 The model</h3>
+  <p>Let both heads predict tendencies, integrated with forward Euler:</p>
+  <div class="math">$$g(u,z)=u+\Delta t\,F(u,z),\qquad h(u,z)=z+\Delta t\,E(u,z), \tag{8.1}$$</div>
+  <p>where \(F:\R^N\times\R^M\to\R^N\) is the fine tendency network and \(E:\R^N\times\R^M\to\R^M\) is the latent tendency network. Writing subscripts for partial derivatives (\(F_u=\partial F/\partial u\), and so on), the blocks of Eq.&nbsp;(5.3) are</p>
+  <div class="math">$$A=I_N+\Delta t\,F_u,\qquad B=\Delta t\,F_z,\qquad C=\Delta t\,E_u,\qquad K=I_M+\Delta t\,E_z. \tag{8.2}$$</div>
+
+  <h3>8.2 Physical block</h3>
+  <p>Using Eq.&nbsp;(8.2) and Eq.&nbsp;(2.2),</p>
+  <div class="math">$$A+BD\Phi'_n=I+\Delta t\,F_u+\Delta t\,F_zD\big(I+O(\Delta t)\big)=I+\Delta t\,H_{\text{eff}}+O(\Delta t^2),\qquad H_{\text{eff}}=F_u+F_zD. \tag{8.3}$$</div>
+  <p>\(H_{\text{eff}}\) is the effective tendency Jacobian of HINE. It is the HINE counterpart of the deck's \(\nabla H\). By Eq.&nbsp;(6.3) and Eq.&nbsp;(2.2), the fit error is \(\Delta^g=\Delta t\,(H_{\text{eff}}-L)+O(\Delta t^2)\). A good fit means \(H_{\text{eff}}\approx L\).</p>
+
+  <h3>8.3 Parasitic block</h3>
+  <p>Using Eq.&nbsp;(7.8), Eq.&nbsp;(8.2) and Eq.&nbsp;(2.2),</p>
+  <div class="math">$$S=I_M+\Delta t\,E_z-D\big(I+O(\Delta t)\big)\Delta t\,F_z=I_M+\Delta t\,\Sigma+O(\Delta t^2),\qquad \Sigma=E_z-DF_z. \tag{8.4}$$</div>
+  <p>\(\Sigma\) is the tendency of the off-graph latent error. It is the difference between how the latent tendency responds to the latent and how the coarse part of the fine tendency responds to the latent.</p>
+
+  <h3>8.4 Lower-left block</h3>
+  <p>From Eq.&nbsp;(6.3) with Eq.&nbsp;(8.2) and Eq.&nbsp;(2.2), and collecting first-order terms,</p>
+  <div class="math">$$\Delta^h=\Delta t\,E_u+\big(I+\Delta t E_z\big)D\big(I+\Delta tL_n\big)-D\big(I+\Delta tL_{n+1}\big)\big(I+\Delta tL_n\big)=\Delta t\big(E_u+E_zD-DL\big)+O(\Delta t^2). \tag{8.5}$$</div>
+  <p>Here \(L_{n+1}=L_n+O(\Delta t)\) was used, and both are written \(L\). The zeroth-order terms \(D\) and \(-D\) cancel. With \(D\Phi'_{n+1}\Delta^g=\Delta t\,D(H_{\text{eff}}-L)+O(\Delta t^2)\),</p>
+  <div class="math">$$\Delta^h-D\Phi'_{n+1}\Delta^g=\Delta t\,\big(E_u+E_zD-DF_u-DF_zD\big)+O(\Delta t^2)=\Delta t\,\Lambda+O(\Delta t^2),\qquad \Lambda=E_u-DF_u+\Sigma D. \tag{8.6}$$</div>
+  <p>The terms \(-DL\) and \(+DL\) cancel. A good fit of both heads makes \(\Lambda\) small.</p>
+
+  <div class="box result">
+    <span class="tag">Result 2 · integration-constrained form</span>
+    <p>Collecting Eq.&nbsp;(8.3), Eq.&nbsp;(8.4) and Eq.&nbsp;(8.6), the matrix \(T_n\) of Eq.&nbsp;(7.7) is</p>
+    <div class="math">$$T_n=I+\Delta t\,\mathcal H_n+O(\Delta t^2),\qquad \mathcal H_n=\begin{pmatrix}H_{\text{eff}} & F_z\\ \Lambda & \Sigma\end{pmatrix}. \tag{8.7}$$</div>
+    <p>This has the deck's form \(I+\Delta t\nabla H\), with the augmented tendency Jacobian \(\mathcal H\) in place of \(\nabla H\).</p>
+  </div>
+  <p>The data constrain \(H_{\text{eff}}\) and \(\Lambda\), which contain only total derivatives. They do not constrain \(F_z\) or \(\Sigma\), which by Section&nbsp;6.3 depend on how each head divides its sensitivity between its two inputs.</p>
+</section>
+
+<!-- 9 -->
+<section id="s9">
+  <h2><span class="n">9</span>The trace diagnostic for HINE</h2>
+  <p>This section derives the HINE counterparts of Eq.&nbsp;(3.7) and Eq.&nbsp;(3.8).</p>
+
+  <h3>9.1 Fine-error norm</h3>
+  <p>From Eq.&nbsp;(7.7) and Eq.&nbsp;(8.7), without the injection term, the fine error after one step is \((I+\Delta tH_{\text{eff}})e+\Delta t F_z\nu\). Squaring and keeping first-order terms,</p>
+  <div class="math">$$\|e_{n+1}\|^2=\|e_n\|^2+2\Delta t\,e_n^\top H_{\text{eff}}\,e_n+2\Delta t\,e_n^\top F_z\,\nu_n+O(\Delta t^2). \tag{9.1}$$</div>
+  <p>The first correction term has the deck's form with \(H_{\text{eff}}\) in place of \(\nabla H\). The second correction term is new. It couples the fine error to the off-graph latent error through \(F_z\).</p>
+
+  <h3>9.2 Trace of the effective tendency</h3>
+  <p>Under the isotropy assumption of Section&nbsp;3.6, Eq.&nbsp;(3.8) gives \(\E[e^\top H_{\text{eff}}e]=\|e\|^2\Tr(H_{\text{eff}})/N\). By Eq.&nbsp;(8.3), \(\Tr(H_{\text{eff}})=\Tr(F_u)+\Tr(F_zD)\). For an \(N\times M\) matrix \(X\) and an \(M\times N\) matrix \(Y\), \(\Tr(XY)=\Tr(YX)\). So \(\Tr(F_zD)=\Tr(DF_z)\), which is the trace of an \(M\times M\) matrix. Hence</p>
+  <div class="math">$$\frac{\Tr(H_{\text{eff}})}{N}=\frac{\Tr(F_u)}{N}+\frac{\Tr(DF_z)}{N}. \tag{9.2}$$</div>
+  <p>The first term is the trace of the fine tendency's dependence on the current state. It is the quantity the deck measures for an \(L=1\) model. The second term is the contribution routed through the coarse future. The data constrain the sum only along directions that the training trajectories explore. A Hutchinson estimate uses random probe directions, most of which point away from those directions, so neither term nor their sum is fixed by the data in the direction that the estimate measures.</p>
+
+  <h3>9.3 The cross term</h3>
+  <p>If \(e\) and \(\nu\) were independent random vectors with zero mean, \(\E[e^\top F_z\nu]\) would be zero. In a rollout they are not independent. By Eq.&nbsp;(7.8), \(\nu\) is built from \(\varepsilon^z-D\Phi'\varepsilon^u\), and \(e\) is built from \(\varepsilon^u\), so both depend on the same injected errors. The cross term has to be measured on actual rollout errors.</p>
+
+  <h3>9.4 Off-graph norm</h3>
+  <p>From the second row of Eq.&nbsp;(7.7) with Eq.&nbsp;(8.7), without injection,</p>
+  <div class="math">$$\|\nu_{n+1}\|^2=\|\nu_n\|^2+2\Delta t\,\nu_n^\top\Sigma\,\nu_n+2\Delta t\,\nu_n^\top\Lambda\,e_n+O(\Delta t^2). \tag{9.3}$$</div>
+  <p>Under isotropy of \(\nu\) in \(\R^M\), \(\E[\nu^\top\Sigma\nu]=\|\nu\|^2\Tr(\Sigma)/M\). A negative \(\Tr(\Sigma)/M\) is the trace form of the parasitic-root condition of Section&nbsp;7.6.</p>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2><span class="n">10</span>Unrolled error and the retention channels</h2>
+  <p>This section derives the HINE counterpart of Eq.&nbsp;(3.4) and splits the retention \(R\) of Eq.&nbsp;(3.5) into two channels.</p>
+
+  <h3>10.1 Initial conditions</h3>
+  <p>Assume the rollout starts from the true state and the true coarse future, so \(e_0=0\) and \(\eta_0=0\). By Eq.&nbsp;(7.1), \(\nu_0=0\).</p>
+
+  <h3>10.2 Unrolling the fine row</h3>
+  <p>Treat \(\Delta t F_z\nu_j\) in the first row of Eq.&nbsp;(7.7) as an extra forcing next to \(\varepsilon^u_j\). The first row then has the form of Eq.&nbsp;(3.3) with \(J_j\) replaced by \(I+\Delta tH_{\text{eff},j}\) and \(\varepsilon_j\) replaced by \(\varepsilon^u_j+\Delta tF_{z,j}\nu_j\). Eq.&nbsp;(3.4) then gives</p>
+  <div class="math">$$e_n=\sum_{j=0}^{n-1}\Big(\prod_{k=j+1}^{n-1}\big(I+\Delta tH_{\text{eff},k}\big)\Big)\big(\varepsilon^u_j+\Delta t\,F_{z,j}\,\nu_j\big). \tag{10.1}$$</div>
+
+  <h3>10.3 Grouping by the number of Jacobian factors</h3>
+  <p>The deck (slide&nbsp;6) expands each product and groups the terms by how many Jacobian factors they contain. Each factor carries one power of \(\Delta t\). This grouping is a bookkeeping device. It is not an expansion in a small parameter, because the number of terms in each group grows with the number of steps. Expanding the product in Eq.&nbsp;(10.1) as \(I+\Delta t\sum_{k=j+1}^{n-1}H_{\text{eff},k}+\cdots\) and keeping the groups with zero and one factor,</p>
+  <div class="math">$$e_n=\underbrace{\sum_{i=0}^{n-1}\varepsilon^u_i}_{\text{injection}}+\underbrace{\Delta t\sum_{0\le i\lt k\le n-1}H_{\text{eff},k}\,\varepsilon^u_i}_{r_H}+\underbrace{\Delta t\sum_{j=0}^{n-1}F_{z,j}\,\nu_j}_{r_z}+\cdots, \tag{10.2}$$</div>
+  <p>where the dots stand for groups with two or more factors.</p>
+
+  <h3>10.4 The off-graph error at zero factors</h3>
+  <p>Unrolling the second row of Eq.&nbsp;(7.7) from \(\nu_0=0\) in the same way, with \(S=I+\Delta t\Sigma\), the group with zero factors is the plain sum of the off-graph injections:</p>
+  <div class="math">$$\nu_j=\sum_{i=0}^{j-1}\xi_i+\cdots,\qquad \xi_i=\varepsilon^z_i-D\Phi'_{i+1}\varepsilon^u_i=\varepsilon^z_i-D\varepsilon^u_i+O(\Delta t\,\|\varepsilon\|). \tag{10.3}$$</div>
+  <p>The last equality uses Eq.&nbsp;(2.2). At this order \(\nu_j\) accumulates without damping, because \(S\) differs from the identity only at order \(\Delta t\).</p>
+
+  <h3>10.5 Two retention channels</h3>
+  <div class="box result">
+    <span class="tag">Result 3 · retention channels</span>
+    <p>Substituting Eq.&nbsp;(10.3) into Eq.&nbsp;(10.2), the vector retained error \(\rho_n=e_n-\sum_i\varepsilon^u_i\) has, at one Jacobian factor,</p>
+    <div class="math">$$\rho_n=\underbrace{\Delta t\sum_{0\le i\lt k\le n-1}H_{\text{eff},k}\,\varepsilon^u_i}_{r_H}+\underbrace{\Delta t\sum_{j=1}^{n-1}F_{z,j}\sum_{i=0}^{j-1}\big(\varepsilon^z_i-D\varepsilon^u_i\big)}_{r_z}+\cdots. \tag{10.4}$$</div>
+    <p>The channel \(r_H\) is the deck's one-factor retention term with \(\nabla H\) replaced by \(H_{\text{eff}}\). The channel \(r_z\) is new. It carries the accumulated inconsistency between the latent head and the coarse part of the fine head into the fine state, through \(F_z\).</p>
+  </div>
+
+  <h3>10.6 Order of the new channel</h3>
+  <p>Fix the horizon \(T=n\Delta t\) and use \(\|\varepsilon^u\|=\Delta t\,\bar\varepsilon^u\) as in the deck. In the integration-constrained form of Eq.&nbsp;(8.1), the latent head also changes its input by an amount proportional to \(\Delta t\), so \(\|\varepsilon^z\|=\Delta t\,\bar\varepsilon^z\) as well. The double sum in \(r_H\) has \(n(n-1)/2\approx T^2/(2\Delta t^2)\) terms, each of size about \(\Delta t\,\|H_{\text{eff}}\|\,\Delta t\,\bar\varepsilon^u\). Their product is about \(\tfrac12T^2\|H_{\text{eff}}\|\bar\varepsilon^u\), which does not depend on \(\Delta t\). The double sum in \(r_z\) also has about \(n^2/2\) terms, each of size about \(\Delta t\,\|F_z\|\,\Delta t\,\overline{\xi}\), so it scales as \(\tfrac12T^2\|F_z\|\,\overline{\xi}\). The new channel is of the same order in \(T\) as the deck's retention term. It cannot be neglected relative to \(r_H\).</p>
+
+  <h3>10.7 Quantities to set beside the deck</h3>
+  <div class="tablewrap"><table>
+    <tr><th>HINE quantity</th><th>deck counterpart</th><th>what it tells us</th></tr>
+    <tr><td>\(\Tr(F_u)/N\), Eq.&nbsp;(9.2)</td><td>\(\Tr(\nabla H)/N\) of the single-step and multi-step models (slide&nbsp;14)</td><td>Whether HINE has a negative direct trace without unrolled training</td></tr>
+    <tr><td>\(\Tr(DF_z)/N\), Eq.&nbsp;(9.2)</td><td>none</td><td>Whether contraction is routed through the coarse future</td></tr>
+    <tr><td>\(\Tr(\Sigma)/M\) and \(\rho(S)\), Eq.&nbsp;(8.4) and Eq.&nbsp;(9.3)</td><td>none, because an \(L=1\) model has no parasitic block</td><td>Whether the latent memory is itself stable</td></tr>
+    <tr><td>Injection, \(\|r_H\|\), \(\|r_z\|\) on rollouts, Eq.&nbsp;(10.4)</td><td>\(I\) and \(R\) (slides&nbsp;7, 8 and 15)</td><td>Which channel carries HINE's retention</td></tr>
+  </table></div>
+  <p class="sub">Table&nbsp;2. HINE quantities from Sections&nbsp;8 to 10 and their counterparts in the step-size deck.</p>
+</section>
+
+<!-- 11 -->
+<section id="s11">
+  <h2><span class="n">11</span>What the training loss controls</h2>
+  <p>This section compares the terms that appear in a two-step unrolled loss with the terms that appear in the HINE loss of Eq.&nbsp;(4.3).</p>
+
+  <h3>11.1 Two-step unrolled loss for an L = 1 model</h3>
+  <p>For the model of Eq.&nbsp;(3.1), apply \(\tilde G\) twice from the true state. The first application gives \(u_{n+1}+\varepsilon_n\) by Eq.&nbsp;(3.2). Expanding the second application about \(u_{n+1}\),</p>
+  <div class="math">$$\tilde G\big(\tilde G(u_n)\big)=\tilde G(u_{n+1}+\varepsilon_n)=\tilde G(u_{n+1})+J_{n+1}\varepsilon_n+O(\|\varepsilon\|^2)=u_{n+2}+\varepsilon_{n+1}+J_{n+1}\varepsilon_n. \tag{11.1}$$</div>
+  <p>The two-step loss is therefore</p>
+  <div class="math">$$\mathcal L_2=\big\|\varepsilon_{n+1}+J_{n+1}\varepsilon_n\big\|^2=\big\|\varepsilon_{n+1}+\varepsilon_n\big\|^2+2\Delta t\,(\varepsilon_{n+1}+\varepsilon_n)^\top\nabla H_{n+1}\,\varepsilon_n+\Delta t^2\big\|\nabla H_{n+1}\varepsilon_n\big\|^2, \tag{11.2}$$</div>
+  <p>where the second equality substitutes \(J_{n+1}=I+\Delta t\nabla H_{n+1}\) and expands the square.</p>
+
+  <h3>11.2 The trace enters the unrolled loss</h3>
+  <p>The term \(2\Delta t\,\varepsilon_n^\top\nabla H_{n+1}\varepsilon_n\) in Eq.&nbsp;(11.2) has, under isotropy of \(\varepsilon_n\), the expectation \(2\Delta t\|\varepsilon_n\|^2\Tr(\nabla H_{n+1})/N\) by Eq.&nbsp;(3.8). At equal one-step error, a model with a more negative trace has a lower \(\mathcal L_2\). Training on \(\mathcal L_2\) therefore pushes the trace toward negative values. An unroll over \(p\) steps contains about \(p^2/2\) such terms. This is consistent with the deck's observation that multi-step training gives a negative trace and \(R\lt0\) (slides&nbsp;8 and 14). The argument gives the direction of the gradient. It does not show where training converges.</p>
+
+  <h3>11.3 The HINE loss</h3>
+  <p>By Eq.&nbsp;(5.2), the HINE loss of Eq.&nbsp;(4.3) is</p>
+  <div class="math">$$\mathcal L_{\text{HINE}}=\|\varepsilon^u_n\|^2+\|\varepsilon^z_n\|^2. \tag{11.3}$$</div>
+  <p>Both residuals are evaluated at true inputs. Neither contains a model Jacobian, and neither involves the model at a state it produced itself. The target \(Du_{n+2}\) lies two steps ahead, but the latent head reaches it in one evaluation from true inputs. It is a direct two-step prediction, not the model composed with itself. At equal one-step error, the HINE loss is the same for every value of the trace.</p>
+
+  <div class="box result">
+    <span class="tag">Result 4 · consequence for the comparison</span>
+    <p>HINE's training contains no term of the kind that pushes the trace negative in Eq.&nbsp;(11.2). In this respect it belongs with the single-step model of slide&nbsp;8, whose retention \(R\) grew without bound. If HINE nevertheless shows \(R\le0\), the contraction comes from the structure of the map and from what the heads are asked to fit, not from the loss. The network's inductive bias could still produce a negative trace. Measuring \(\Tr(F_u)/N\) and \(\Tr(DF_z)/N\) decides this.</p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section id="s12">
+  <h2><span class="n">12</span>A scalar test problem</h2>
+  <p>This section computes the physical and parasitic roots of Section&nbsp;7.6 explicitly for a linear scalar problem.</p>
+
+  <h3>12.1 Set-up</h3>
+  <p>Take a single Fourier mode of a linear equation \(\dot u=\mu u\), and assume its wavenumber is below \(k_c\), so that the restriction acts on it as the identity (\(D=1\)). The true one-step factor is \(a=e^{\mu\Delta t}\). Take linear heads:</p>
+  <div class="math">$$g(u,z)=\alpha u+\beta z,\qquad h(u,z)=\gamma u+\kappa z. \tag{12.1}$$</div>
+
+  <h3>12.2 What the data fix</h3>
+  <p>The training inputs are \(u_n\) and \(z_{n+1}=au_n\). The targets are \(u_{n+1}=au_n\) and \(z_{n+2}=a^2u_n\). An exact fit requires \(\alpha u_n+\beta au_n=au_n\) and \(\gamma u_n+\kappa au_n=a^2u_n\) for all \(u_n\), which gives</p>
+  <div class="math">$$\alpha=a(1-\beta),\qquad \gamma=a(a-\kappa). \tag{12.2}$$</div>
+  <p>There are two equations for four coefficients. \(\beta\) and \(\kappa\) remain free, as Section&nbsp;6.3 predicts.</p>
+
+  <h3>12.3 Roots</h3>
+  <p>The augmented map has matrix \(\begin{pmatrix}\alpha&\beta\\ \gamma&\kappa\end{pmatrix}\). Its trace is \(\alpha+\kappa=a-a\beta+\kappa\). Using Eq.&nbsp;(12.2), its determinant is</p>
+  <div class="math">$$\alpha\kappa-\beta\gamma=a(1-\beta)\kappa-\beta a(a-\kappa)=a\kappa-a\beta\kappa-a^2\beta+a\beta\kappa=a(\kappa-a\beta). \tag{12.3}$$</div>
+  <p>Write \(s=\kappa-a\beta\). The trace equals \(a+s\) and the determinant equals \(as\), so the characteristic polynomial factors:</p>
+  <div class="math">$$\lambda^2-(a+s)\lambda+as=(\lambda-a)(\lambda-s),\qquad s=\kappa-a\beta. \tag{12.4}$$</div>
+  <p>The physical root is \(a\), the exact one-step factor. The parasitic root is \(s\). Eq.&nbsp;(7.8) with \(K=\kappa\), \(D=1\), \(\Phi'=a\) and \(B=\beta\) gives \(S=\kappa-a\beta=s\), which agrees with Eq.&nbsp;(12.4).</p>
+
+  <h3>12.4 Cases</h3>
+  <p>Table&nbsp;3 evaluates Eq.&nbsp;(12.2) and Eq.&nbsp;(12.4) for three ways of dividing the sensitivity between the inputs.</p>
+  <div class="tablewrap"><table>
+    <tr><th>case</th><th>coefficients</th><th>update</th><th>parasitic root</th></tr>
+    <tr><td>Fine head copies the latent, latent head ignores the latent</td><td>\(\beta=1,\ \kappa=0\), so \(\alpha=0,\ \gamma=a^2\)</td><td>\(u_{n+1}=z_{n+1}\), \(z_{n+2}=a^2u_n\)</td><td>\(s=-a\)</td></tr>
+    <tr><td>Fine head copies the latent, latent head uses only the latent</td><td>\(\beta=1,\ \kappa=a\), so \(\alpha=0,\ \gamma=0\)</td><td>\(u_{n+1}=z_{n+1}\), \(z_{n+2}=az_{n+1}\)</td><td>\(s=0\)</td></tr>
+    <tr><td>Fine head ignores the latent</td><td>\(\beta=0\), so \(\alpha=a\)</td><td>\(u_{n+1}=au_n\)</td><td>\(s=\kappa\)</td></tr>
+  </table></div>
+  <p class="sub">Table&nbsp;3. Physical root \(a\) in every case. The parasitic root depends on the division of sensitivity, which the data do not fix.</p>
+  <p>In the first case, \(u_{n+2}=z_{n+2}=a^2u_n\). Even-numbered and odd-numbered steps evolve as two separate chains, and a disturbance that alternates between them has root \(-a\). This is the same mechanism as the computational mode of the leapfrog scheme. Its magnitude equals the physical one, so it is not damped. In the second case, the latent evolves as a closed one-step model and the fine state copies it. Any off-graph error is removed after one step. In the third case, the fine state does not use the latent, and the latent's own memory \(\kappa\) sets the parasitic root without affecting the fine state.</p>
+
+  <h3>12.5 Modes above the cutoff</h3>
+  <p>For a mode with wavenumber above \(k_c\), the restriction removes the mode (\(D=0\) on that mode). The latent contains no information about it. In a linear model that acts on each Fourier mode separately, \(g\) can only use \(u_n\) for this mode, the fit gives \(\alpha=a\), and the mode is advanced exactly as in an \(L=1\) model. In this setting the hierarchy has no effect above \(k_c\). An effect above \(k_c\) requires coupling between wavenumbers. In the true system this coupling comes from the nonlinear term. Average pooling adds some coupling through aliasing. Section&nbsp;14 treats the nonlinear coupling.</p>
+</section>
+
+<!-- 13 -->
+<section id="s13">
+  <h2><span class="n">13</span>What an implicit HINE would be</h2>
+  <p>This section constructs the implicit counterpart of HINE and derives its Jacobian, which answers question&nbsp;2 of Section&nbsp;1.</p>
+
+  <h3>13.1 Definition</h3>
+  <p>An implicit version would require the latent to be consistent with the fine state that it produces within the same step. At step \(n\) it would solve for the coarse future \(z^*\) in</p>
+  <div class="math">$$z^*=D\,g(\hat u_n,z^*), \tag{13.1}$$</div>
+  <p>and then set \(\hat u_{n+1}=g(\hat u_n,z^*)\). Eq.&nbsp;(13.1) has the unknown on both sides, as backward Euler in Eq.&nbsp;(4.4) does. The trained \(g\) can be used this way, because at the training data \(z=Du_{n+1}\) and \(g(u_n,Du_{n+1})\approx u_{n+1}\), so \(Dg(u_n,Du_{n+1})\approx z\) and the true coarse future is an approximate solution of Eq.&nbsp;(13.1). In this version the latent head \(h\) is not needed, and the state is \(\hat u_n\) alone.</p>
+
+  <h3>13.2 Jacobian</h3>
+  <p>Differentiate Eq.&nbsp;(13.1) with respect to \(\hat u_n\). A change \(du\) produces a change \(dz^*\) that satisfies \(dz^*=DA\,du+DB\,dz^*\). If \(I_M-DB\) is invertible,</p>
+  <div class="math">$$dz^*=(I_M-DB)^{-1}DA\,du. \tag{13.2}$$</div>
+  <p>The change in the output is \(du_{n+1}=A\,du+B\,dz^*\). Substituting Eq.&nbsp;(13.2),</p>
+  <div class="math">$$du_{n+1}=\big[I_N+B(I_M-DB)^{-1}D\big]A\,du. \tag{13.3}$$</div>
+  <p>The bracket equals \((I_N-BD)^{-1}\). To verify this, multiply it by \(I_N-BD\):</p>
+  <div class="math">$$(I_N-BD)\big[I_N+B(I_M-DB)^{-1}D\big]=I_N-BD+B\big[(I_M-DB)(I_M-DB)^{-1}\big]D=I_N-BD+BD=I_N. \tag{13.4}$$</div>
+  <p>The middle step collects \(B(I_M-DB)^{-1}D-BDB(I_M-DB)^{-1}D=B(I_M-DB)(I_M-DB)^{-1}D\). Hence</p>
+  <div class="math">$$J_{\text{impl}}=(I_N-BD)^{-1}A. \tag{13.5}$$</div>
+
+  <h3>13.3 Relation to the fit error</h3>
+  <p>By Eq.&nbsp;(6.3), \(A=\Phi'+\Delta^g-BD\Phi'=(I_N-BD)\Phi'+\Delta^g\). Substituting into Eq.&nbsp;(13.5),</p>
+  <div class="math">$$J_{\text{impl}}=\Phi'+(I_N-BD)^{-1}\Delta^g. \tag{13.6}$$</div>
+  <p>The implicit version has no parasitic block, because its state is \(\hat u_n\) alone. Its physical Jacobian is the true tangent map plus the fit error multiplied by \((I_N-BD)^{-1}\). The explicit HINE of Result&nbsp;1 has the fit error without this factor, and has the parasitic block \(S\) in addition.</p>
+
+  <h3>13.4 Integration-constrained form</h3>
+  <p>With Eq.&nbsp;(8.2), \(A=I+\Delta tF_u\) and \(BD=\Delta tF_zD\), so Eq.&nbsp;(13.5) becomes</p>
+  <div class="math">$$J_{\text{impl}}=\big(I_N-\Delta t\,F_zD\big)^{-1}\big(I_N+\Delta t\,F_u\big). \tag{13.7}$$</div>
+  <p>Consider an implicit–explicit (IMEX) Euler step for \(\dot u=\mathcal F_E(u)+\mathcal F_I(u)\), defined by \(u_{n+1}=u_n+\Delta t\mathcal F_E(u_n)+\Delta t\mathcal F_I(u_{n+1})\). Differentiating gives the Jacobian \((I-\Delta t\nabla\mathcal F_I)^{-1}(I+\Delta t\nabla\mathcal F_E)\). Eq.&nbsp;(13.7) has this form with \(\nabla\mathcal F_I=F_zD\) and \(\nabla\mathcal F_E=F_u\). The implicit HINE is therefore an IMEX scheme. Its implicit part is the part of the tendency that acts through the coarse future, and \(F_zD\) has rank at most \(M\). Its explicit part is the dependence on the current state. The split is made by spatial scale, whereas a conventional IMEX scheme splits by stiffness. For comparison, the implicit-Euler models of arXiv:2608.16084 have Jacobian \((I-\Delta t\nabla H)^{-1}\), which is implicit in all \(N\) directions.</p>
+
+  <h3>13.5 When the implicit version is not defined</h3>
+  <p>Suppose the fine head returns the latent as the coarse part of its output, \(Pg(u,z)=D^+z\). Then \(Dg(u,z)=DPg+DQg\). Since \(DP=DD^+D=D\) and \(DQ=0\) by Section&nbsp;2, \(Dg(u,z)=DD^+z=z\) by Eq.&nbsp;(2.3). Every \(z\) solves Eq.&nbsp;(13.1), and the equation determines nothing. In Jacobian terms \(DB=I_M\), so \(I_M-DB\) is singular and Eq.&nbsp;(13.2) fails. If a trained HINE has the eigenvalues of \(DB\) near 1, its implicit version is ill-conditioned, and its coarse dynamics are carried entirely by the explicit latent head \(h\). If the eigenvalues of \(DB\) are near 0, the fine head ignores the latent. Measuring the spectrum of \(DB\) distinguishes these cases.</p>
+
+  <h3>13.6 Where the stability argument for implicit schemes applies</h3>
+  <p>Backward Euler is used for stiff problems because of the scalar test \(\dot u=\mu u\) with \(\mu\lt0\) and large \(|\mu|\). Forward Euler multiplies by \(1+\mu\Delta t\), whose magnitude exceeds 1 when \(\mu\Delta t\lt-2\). Backward Euler multiplies by \(1/(1-\mu\Delta t)\), whose magnitude is below 1 for every \(\Delta t\gt0\). A direct-step emulator such as the published HINE is fitted to the flow map. Its target factor is \(e^{\mu\Delta t}\), whose magnitude is below 1 for every \(\mu\lt0\) and every \(\Delta t\). There is no step-size limit for implicitness to remove. Its instability comes from the fit error \(\Delta^g\), not from a truncation error. For integration-constrained models the stiffness argument applies, because \(H\) approximates a right-hand side and \(1+\Delta t\lambda(\nabla H)\) can leave the unit disk. arXiv:2608.16084 reports \(\Delta t\,k_{\max}^4=1.07\times10^3\) for the Kuramoto–Sivashinsky (KS) tangent operator at its resolution.</p>
+</section>
+
+<!-- 14 -->
+<section id="s14">
+  <h2><span class="n">14</span>Coarse-graining and synchronization</h2>
+  <p>This section proposes the mechanism behind HINE's stability and gives the argument that supports it. The central claim is a hypothesis, stated as such in Section&nbsp;14.3.</p>
+
+  <h3>14.1 The fine-to-fine block</h3>
+  <p>Multiply the first relation of Eq.&nbsp;(6.3) by \(Q\) on both sides, and write \(X_{QQ}=QXQ\):</p>
+  <div class="math">$$A_{QQ}=\Phi'_{QQ}-(QB)\,(D\Phi'Q)+\Delta^g_{QQ}. \tag{14.1}$$</div>
+  <p>Each term has a direct reading.</p>
+  <ul>
+    <li>\(\Phi'_{QQ}\) is how a fine-scale perturbation at \(t_n\) becomes a fine-scale perturbation at \(t_{n+1}\) under the true dynamics.</li>
+    <li>\(D\Phi'Q\) is how a fine-scale perturbation at \(t_n\) changes the coarse state at \(t_{n+1}\). This is transfer from small scales to large scales (backscatter).</li>
+    <li>\(QB\) is how the fine part of \(g\)'s output responds to the latent.</li>
+  </ul>
+  <p>The product \((QB)(D\Phi'Q)\) is the part of the fine-to-fine response that \(g\) obtains through the latent. \(A_{QQ}\) is what remains. It is the sensitivity of \(g\)'s fine output to the current fine state with the coarse future held fixed.</p>
+
+  <h3>14.2 The conditional tangent map</h3>
+  <p>Consider the true dynamics with the coarse part of the trajectory prescribed. Let \(\Psi_n=\partial(Qu_{n+1})/\partial(Qu_n)\) be the derivative of the fine state at \(t_{n+1}\) with respect to the fine state at \(t_n\), when \(Pu\) is held equal to the true coarse trajectory over \([t_n,t_{n+1}]\). \(\Psi_n\) is the conditional tangent map of the fine scales.</p>
+
+  <h3>14.3 Hypothesis</h3>
+  <div class="box result">
+    <span class="tag">Hypothesis H · synchronization</span>
+    <p>The trained fine head satisfies \(A_{QQ}\approx\Psi_n\). Products of \(\Psi_n\) contract on average when \(k_c\) exceeds a threshold \(k_c^*\) set by the flow. Below that threshold they do not. Under H, fine-scale errors in HINE decay per step by a factor of about \(e^{\lambda_c\Delta t}\), where \(\lambda_c\lt0\) is the average conditional growth rate. They decay unless the loop \(e^Q\to\eta\to e^Q\), which runs through \(C\) and \(QB\), excites them again.</p>
+  </div>
+  <p>\(\Psi_n\) assumes that the whole coarse path over the step is prescribed. HINE gives only the coarse state at the end of the step, together with \(u_n\). With \(\Delta t=0.05\), this approximation is reasonable if the coarse field changes little within one step. It is part of what H assumes.</p>
+
+  <h3>14.4 Why the fine scales contract once the coarse scales are given</h3>
+  <p>The following energy argument shows the contraction for two-dimensional incompressible flow with Rayleigh drag. It is the standard argument behind the Foias–Prodi determining-modes result and behind the nudging scheme of Azouani, Olson and Titi. Let \(\mathbf u_1\) and \(\mathbf u_2\) be two velocity fields that solve</p>
+  <div class="math">$$\partial_t\mathbf u+(\mathbf u\cdot\nabla)\mathbf u=-\nabla p+\nu\Delta\mathbf u-\alpha\mathbf u+\mathbf f-\beta y\,\hat{\mathbf z}\times\mathbf u,\qquad \nabla\cdot\mathbf u=0, \tag{14.2}$$</div>
+  <p>on the doubly periodic domain, with the same forcing \(\mathbf f\). Here \(\nu\) is the viscosity, \(\alpha\) is the drag coefficient and \(\beta\) is the planetary-vorticity gradient. Suppose the two solutions have the same coarse part at all times. Then their difference \(\mathbf w=\mathbf u_1-\mathbf u_2\) is purely fine. Subtracting the two equations and using \((\mathbf u_1\cdot\nabla)\mathbf u_1-(\mathbf u_2\cdot\nabla)\mathbf u_2=(\mathbf u_1\cdot\nabla)\mathbf w+(\mathbf w\cdot\nabla)\mathbf u_2\), the inner product with \(\mathbf w\) gives</p>
+  <div class="math">$$\tfrac12\frac{d}{dt}\|\mathbf w\|^2+\nu\|\nabla\mathbf w\|^2+\alpha\|\mathbf w\|^2=-\int(\mathbf w\cdot\nabla)\mathbf u_2\cdot\mathbf w\,dx. \tag{14.3}$$</div>
+  <p>Four terms drop out of Eq.&nbsp;(14.3). The advection term \(\int(\mathbf u_1\cdot\nabla)\mathbf w\cdot\mathbf w\,dx\) is zero because \(\mathbf u_1\) is divergence-free. The pressure term is zero because \(\mathbf w\) is divergence-free. The Coriolis term \((\hat{\mathbf z}\times\mathbf w)\cdot\mathbf w\) is zero at every point. The forcing cancels in the difference.</p>
+  <p>The right-hand side of Eq.&nbsp;(14.3) is bounded by \(\|\mathbf w\|_{L^4}^2\|\nabla\mathbf u_2\|\). Ladyzhenskaya's inequality in two dimensions, \(\|\mathbf w\|_{L^4}^2\le c\|\mathbf w\|\|\nabla\mathbf w\|\), with \(c\) a constant, gives the bound \(c\|\mathbf w\|\|\nabla\mathbf w\|\|\nabla\mathbf u_2\|\). Young's inequality \(xy\le\tfrac{\nu}{2}x^2+\tfrac{1}{2\nu}y^2\), with \(x=\|\nabla\mathbf w\|\) and \(y=c\|\mathbf w\|\|\nabla\mathbf u_2\|\), bounds this by \(\tfrac{\nu}{2}\|\nabla\mathbf w\|^2+\tfrac{c^2}{2\nu}\|\nabla\mathbf u_2\|^2\|\mathbf w\|^2\). Because \(\mathbf w\) has no Fourier modes below \(k_c\), \(\|\nabla\mathbf w\|^2\ge k_c^2\|\mathbf w\|^2\). Combining these steps in Eq.&nbsp;(14.3),</p>
+  <div class="math">$$\frac{d}{dt}\|\mathbf w\|^2\le-\Big(\nu k_c^2+2\alpha-\frac{c^2}{\nu}\|\nabla\mathbf u_2\|^2\Big)\|\mathbf w\|^2. \tag{14.4}$$</div>
+  <p>The fine-scale difference decays whenever the bracket is positive on time average. The decay rate increases with \(k_c^2\). For large enough \(k_c\), two solutions that share their coarse part have fine parts that converge. The coarse part then determines the fine part asymptotically.</p>
+  <p>Eq.&nbsp;(14.4) has three limits. The constant \(c\) and the use of \(\|\nabla\mathbf u_2\|^2\) make the threshold conservative by a large factor, so the actual \(k_c^*\) has to be measured. The step \(\|\nabla\mathbf w\|\ge k_c\|\mathbf w\|\) holds exactly for a sharp Fourier cutoff and only approximately for average pooling. The argument assumes both solutions solve Eq.&nbsp;(14.2) exactly, whereas in HINE the coarse part comes from the model's own prediction.</p>
+
+  <h3>14.5 Consequence for HINE</h3>
+  <p>If the latent gives the coarse future, the fine dynamics that \(g\) has to represent are those of the fine scales with the coarse scales given. By Eq.&nbsp;(14.4) these contract when \(k_c\gt k_c^*\). One-step training on Eq.&nbsp;(4.3) then fits \(A_{QQ}\) to a contracting operator, and a negative fine-scale trace follows from the target, without unrolled training. The chaotic growth of the flow is then carried by the coarse recursion of dimension \(M\). An \(L=1\) model has no such split. It has to fit the full \(\Phi'_{QQ}\), which includes the fine-scale growth driven through the coarse scales.</p>
+  <p>This route to \(R\le0\) differs from the deck's. In the deck, multi-step training produces a negative trace that damps all scales. Under H, HINE damps only the fine scales, conditional on the coarse ones. A scale-resolved trace distinguishes the two.</p>
+
+  <h3>14.6 Prediction for the downsampling factor</h3>
+  <p>arXiv:2506.04528 varies \(r\in\{2,4,8,16\}\) for \(L=2\) (Table&nbsp;2 of that paper) and reports \(r=8\) as best. On a \(256\times256\) grid these factors give \(k_c=64,32,16\) and \(8\). A smaller \(r\) gives a larger \(k_c\), which makes the fine scales contract faster by Eq.&nbsp;(14.4). It also makes the latent larger, so the coarse recursion is closer to the full problem and harder to learn stably. A larger \(r\) gives a smaller latent but may leave \(k_c\) below \(k_c^*\), so that the fine scales are not determined by the coarse ones. Hypothesis H predicts that the best \(r\) lies near the value at which \(k_c\) crosses \(k_c^*\). The threshold \(k_c^*\) can be measured from the numerical solver alone, without training a network, by running the solver with the modes below \(k_c\) replaced by the true values and recording the decay rate of the fine-scale difference.</p>
+</section>
+
+<!-- 15 -->
+<section id="s15">
+  <h2><span class="n">15</span>Order of work</h2>
+  <p>Table&nbsp;4 orders the theory items, states the prediction each makes, and states what each requires.</p>
+  <div class="tablewrap"><table>
+    <tr><th>order</th><th>item</th><th>prediction</th><th>requires</th></tr>
+    <tr><td>1</td><td>Result&nbsp;1 (Eq.&nbsp;(7.7)), Result&nbsp;2 (Eq.&nbsp;(8.7)), trace split (Eq.&nbsp;(9.2)), Result&nbsp;3 (Eq.&nbsp;(10.4))</td><td>The lower-left block of \(T_n\) is small. HINE's retention is carried mainly by one of \(r_H\) and \(r_z\).</td><td>Derivation, then Jacobian-vector products on a trained model</td></tr>
+    <tr><td>2</td><td>Result&nbsp;4 (Section&nbsp;11)</td><td>An \(L=1\) model with latent heads trained but not fed back is not stabilized. An \(L=1\) model with unrolled training is stabilized but damps all scales.</td><td>Derivation, then the ablation models</td></tr>
+    <tr><td>3</td><td>Scalar roots (Eq.&nbsp;(12.4))</td><td>The measured parasitic root of each coarse mode lies inside the unit disk.</td><td>Derivation, then Jacobian-vector products</td></tr>
+    <tr><td>4</td><td>Implicit closure (Eq.&nbsp;(13.5) and Section&nbsp;13.5)</td><td>The eigenvalues of \(DB\) cluster near 1 or near 0.</td><td>Jacobian-vector products on a trained model</td></tr>
+    <tr><td>5</td><td>Hypothesis H (Section&nbsp;14)</td><td>\(k_c^*\) lies near 16 on the \(256\times256\) grid. HINE's fine-block contraction per step is close to \(e^{\lambda_c\Delta t}\).</td><td>Solver runs with clamped coarse modes, no network</td></tr>
+  </table></div>
+  <p class="sub">Table&nbsp;4. Order of work. Items 1 to 3 can be completed on paper first. Item 5 needs only the numerical solver.</p>
+  <p>The deck's testbed (py2d, \(256\times256\), \(\beta=20\), \(\alpha=0.1\), \(\mathrm{Re}=1000\)) differs from HINE's (\(\mathrm{Re}=10^4\), snapshot interval 0.05) mainly in Reynolds number. The deck's single-step and multi-step models can therefore be compared with a HINE trained on the deck's data at the same \(\Delta t\).</p>
+</section>
+
+<!-- 16 -->
+<section id="s16">
+  <h2><span class="n">16</span>Assumptions and limitations</h2>
+  <div class="box caveat">
+    <span class="tag">Assumptions</span>
+    <ol>
+      <li><strong>A1, small errors.</strong> Eq.&nbsp;(5.5) and everything after it drop second-order terms in the errors. They describe a rollout only while its errors are small.</li>
+      <li><strong>A2, derivative-level fit.</strong> Eq.&nbsp;(6.3) defines \(\Delta^g\) and \(\Delta^h\) exactly, but treating them as small assumes that the fit holds for derivatives. Training data cover only the attractor, so the derivative fit can hold at most along directions tangent to it.</li>
+      <li><strong>A3, isotropy.</strong> Eq.&nbsp;(3.8), Eq.&nbsp;(9.2) and Eq.&nbsp;(9.3) assume randomly oriented errors. Rollout errors have preferred directions, so the trace is a diagnostic and not an exact rate.</li>
+      <li><strong>A4, one latent level.</strong> Only \(L=2\) is derived. For \(L=3\), each latent level would get its own off-graph error, and the same substitution should give a block-triangular form with a parasitic block of dimension \(M_1+M_2\). This has not been written out, and the index convention of Eq.&nbsp;(4.1) for \(\hat z^{(2)}\) needs checking first.</li>
+      <li><strong>A5, downsampling type.</strong> The note treats \(D\) as average pooling. If HINE uses spectral truncation, the wavenumber separation in Sections&nbsp;12.5 and 14.4 is exact. If it uses average pooling, the separation is approximate.</li>
+      <li><strong>A6, Hypothesis H.</strong> The identification \(A_{QQ}\approx\Psi_n\) is a hypothesis about what training produces. It is not derived.</li>
+      <li><strong>A7, prescribed coarse part.</strong> Eq.&nbsp;(14.4) holds for two exact solutions with identical coarse parts. In HINE the coarse part is predicted and carries error, which feeds the fine state through \(QB\).</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+</body></html>

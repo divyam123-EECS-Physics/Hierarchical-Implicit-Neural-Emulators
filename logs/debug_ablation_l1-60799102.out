@@ -1,0 +1,113 @@
+/var/spool/slurmd/job60799102/slurm_script: line 24: netstat: command not found
+MASTER_ADDR=127.0.0.1 MASTER_PORT=52397
+| distributed init (rank 0): env://, gpu 0
+/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W1104 05:09:10.699605043 ProcessGroupNCCL.cpp:5310] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[05:09:10.917457] job dir: /global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
+[05:09:10.918240] Namespace(ablation='l1',
+train_unroll=1,
+aux_levels=0,
+aux_loss_weight=1.0,
+ds_factors=[],
+img_size=256,
+num_of_frame=2,
+batch_size=8,
+epochs=1,
+eval_freq=1,
+save_last_freq=1,
+evaluate=False,
+weight_decay=0.05,
+lr=0.0003,
+blr=0.0001,
+min_lr=0.0,
+lr_schedule='constant',
+warmup_epochs=10,
+acc_grad=1,
+ema_rate=0.9995,
+data_path='./data/imagenet',
+output_dir='output/output_debug_ablation_l1',
+log_dir='output/output_debug_ablation_l1',
+device='cuda',
+seed=1,
+resume='output/output_debug_ablation_l1',
+resume_epoch=0,
+start_epoch=0,
+num_workers=4,
+pin_mem=True,
+world_size=1,
+local_rank=-1,
+dist_on_itp=False,
+dist_url='env://',
+rank=0,
+gpu=0,
+distributed=True,
+dist_backend='nccl')
+[05:09:11.083036] 16204
+  0%|          | 0/64 [00:00<?, ?it/s]  2%|▏         | 1/64 [00:00<00:29,  2.16it/s]  3%|▎         | 2/64 [00:00<00:26,  2.33it/s]  5%|▍         | 3/64 [00:01<00:25,  2.42it/s]  6%|▋         | 4/64 [00:01<00:24,  2.46it/s]  8%|▊         | 5/64 [00:02<00:23,  2.54it/s]  9%|▉         | 6/64 [00:02<00:22,  2.57it/s] 11%|█         | 7/64 [00:02<00:22,  2.59it/s] 12%|█▎        | 8/64 [00:03<00:21,  2.60it/s] 14%|█▍        | 9/64 [00:03<00:21,  2.57it/s] 16%|█▌        | 10/64 [00:03<00:21,  2.55it/s] 17%|█▋        | 11/64 [00:04<00:21,  2.51it/s] 19%|█▉        | 12/64 [00:04<00:20,  2.49it/s] 20%|██        | 13/64 [00:05<00:20,  2.47it/s] 22%|██▏       | 14/64 [00:05<00:20,  2.46it/s] 23%|██▎       | 15/64 [00:06<00:19,  2.48it/s] 23%|██▎       | 15/64 [00:06<00:20,  2.34it/s]
+[05:09:17.538141] 121
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  5.61it/s]100%|██████████| 1/1 [00:00<00:00,  5.59it/s]
+[05:09:17.724331] train dataset 4095
+[05:09:17.725376] validation dataset 120
+[05:09:17.726263] ablation=l1 frames=2 unroll=1 aux_levels=0 ds_factors=[]
+[05:09:18.115877] Number of trainable parameters: 34.884994M
+[05:09:18.175525] actual lr: 3.00e-04
+[05:09:18.176224] effective batch size: 8
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/misc.py:251: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self._scaler = torch.cuda.amp.GradScaler()
+[05:09:23.316184] Training from scratch
+[05:09:23.317514] Start training for 1 epochs
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py:85: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+[05:09:48.041259] Epoch: [0]  [  0/511]  eta: 3:30:29  lr: 0.000000  loss: 2.6611 (2.6611)  high_loss: 2.6611 (2.6611)  grad_norm: inf (inf)  time: 24.7162  data: 0.1703  max mem: 6708
+[05:09:50.337825] Epoch: [0]  [ 12/511]  eta: 0:17:16  lr: 0.000001  loss: 2.6404 (2.6392)  high_loss: 2.6404 (2.6392)  grad_norm: 44.9142 (inf)  time: 2.0777  data: 0.0132  max mem: 6708
+[05:09:52.406167] Epoch: [0]  [ 24/511]  eta: 0:09:26  lr: 0.000001  loss: 2.6289 (2.6282)  high_loss: 2.6289 (2.6282)  grad_norm: 44.0911 (inf)  time: 0.1722  data: 0.0001  max mem: 6708
+[05:09:54.470684] Epoch: [0]  [ 36/511]  eta: 0:06:39  lr: 0.000002  loss: 2.5607 (2.5992)  high_loss: 2.5607 (2.5992)  grad_norm: 43.9077 (inf)  time: 0.1720  data: 0.0001  max mem: 6708
+[05:09:56.539760] Epoch: [0]  [ 48/511]  eta: 0:05:13  lr: 0.000003  loss: 2.4610 (2.5585)  high_loss: 2.4610 (2.5585)  grad_norm: 42.5748 (inf)  time: 0.1723  data: 0.0001  max mem: 6708
+[05:09:58.613574] Epoch: [0]  [ 60/511]  eta: 0:04:20  lr: 0.000004  loss: 2.3431 (2.5097)  high_loss: 2.3431 (2.5097)  grad_norm: 41.8696 (inf)  time: 0.1725  data: 0.0001  max mem: 6708
+[05:10:00.683818] Epoch: [0]  [ 72/511]  eta: 0:03:44  lr: 0.000004  loss: 2.2005 (2.4521)  high_loss: 2.2005 (2.4521)  grad_norm: 39.9200 (inf)  time: 0.1726  data: 0.0001  max mem: 6708
+[05:10:02.754133] Epoch: [0]  [ 84/511]  eta: 0:03:18  lr: 0.000005  loss: 2.0263 (2.3833)  high_loss: 2.0263 (2.3833)  grad_norm: 37.6243 (inf)  time: 0.1723  data: 0.0001  max mem: 6708
+[05:10:04.823576] Epoch: [0]  [ 96/511]  eta: 0:02:57  lr: 0.000006  loss: 1.7891 (2.3061)  high_loss: 1.7891 (2.3061)  grad_norm: 33.1296 (inf)  time: 0.1724  data: 0.0001  max mem: 6708
+[05:10:06.894308] Epoch: [0]  [108/511]  eta: 0:02:41  lr: 0.000006  loss: 1.6502 (2.2258)  high_loss: 1.6502 (2.2258)  grad_norm: 29.8307 (inf)  time: 0.1723  data: 0.0001  max mem: 6708
+[05:10:08.959563] Epoch: [0]  [120/511]  eta: 0:02:27  lr: 0.000007  loss: 1.4298 (2.1425)  high_loss: 1.4298 (2.1425)  grad_norm: 23.4196 (inf)  time: 0.1721  data: 0.0001  max mem: 6708
+[05:10:11.028207] Epoch: [0]  [132/511]  eta: 0:02:15  lr: 0.000008  loss: 1.2972 (2.0620)  high_loss: 1.2972 (2.0620)  grad_norm: 18.8680 (inf)  time: 0.1722  data: 0.0001  max mem: 6708
+[05:10:13.111195] Epoch: [0]  [144/511]  eta: 0:02:05  lr: 0.000008  loss: 1.1502 (1.9859)  high_loss: 1.1502 (1.9859)  grad_norm: 15.9629 (inf)  time: 0.1730  data: 0.0001  max mem: 6708
+[05:10:15.184899] Epoch: [0]  [156/511]  eta: 0:01:57  lr: 0.000009  loss: 1.0616 (1.9138)  high_loss: 1.0616 (1.9138)  grad_norm: 15.6517 (inf)  time: 0.1730  data: 0.0001  max mem: 6708
+[05:10:17.258782] Epoch: [0]  [168/511]  eta: 0:01:49  lr: 0.000010  loss: 0.9914 (1.8471)  high_loss: 0.9914 (1.8471)  grad_norm: 15.9730 (inf)  time: 0.1727  data: 0.0001  max mem: 6708
+[05:10:19.334976] Epoch: [0]  [180/511]  eta: 0:01:42  lr: 0.000011  loss: 0.9122 (1.7837)  high_loss: 0.9122 (1.7837)  grad_norm: 15.9252 (inf)  time: 0.1730  data: 0.0001  max mem: 6708
+[05:10:21.407900] Epoch: [0]  [192/511]  eta: 0:01:35  lr: 0.000011  loss: 0.8392 (1.7226)  high_loss: 0.8392 (1.7226)  grad_norm: 14.8698 (inf)  time: 0.1728  data: 0.0001  max mem: 6708
+[05:10:23.485788] Epoch: [0]  [204/511]  eta: 0:01:30  lr: 0.000012  loss: 0.7389 (1.6639)  high_loss: 0.7389 (1.6639)  grad_norm: 13.3602 (inf)  time: 0.1729  data: 0.0001  max mem: 6708
+[05:10:25.559755] Epoch: [0]  [216/511]  eta: 0:01:24  lr: 0.000013  loss: 0.6631 (1.6069)  high_loss: 0.6631 (1.6069)  grad_norm: 10.7506 (inf)  time: 0.1728  data: 0.0001  max mem: 6708
+[05:10:27.628370] Epoch: [0]  [228/511]  eta: 0:01:19  lr: 0.000013  loss: 0.5837 (1.5530)  high_loss: 0.5837 (1.5530)  grad_norm: 8.3290 (inf)  time: 0.1725  data: 0.0001  max mem: 6708
+[05:10:29.702087] Epoch: [0]  [240/511]  eta: 0:01:14  lr: 0.000014  loss: 0.5582 (1.5026)  high_loss: 0.5582 (1.5026)  grad_norm: 6.6877 (inf)  time: 0.1725  data: 0.0001  max mem: 6708
+[05:10:31.776076] Epoch: [0]  [252/511]  eta: 0:01:10  lr: 0.000015  loss: 0.5246 (1.4560)  high_loss: 0.5246 (1.4560)  grad_norm: 6.1833 (inf)  time: 0.1727  data: 0.0001  max mem: 6708
+[05:10:33.861030] Epoch: [0]  [264/511]  eta: 0:01:05  lr: 0.000015  loss: 0.5023 (1.4124)  high_loss: 0.5023 (1.4124)  grad_norm: 5.9053 (inf)  time: 0.1732  data: 0.0001  max mem: 6708
+[05:10:35.931931] Epoch: [0]  [276/511]  eta: 0:01:01  lr: 0.000016  loss: 0.4868 (1.3723)  high_loss: 0.4868 (1.3723)  grad_norm: 6.4146 (inf)  time: 0.1730  data: 0.0001  max mem: 6708
+[05:10:38.002267] Epoch: [0]  [288/511]  eta: 0:00:57  lr: 0.000017  loss: 0.4770 (1.3350)  high_loss: 0.4770 (1.3350)  grad_norm: 6.0703 (inf)  time: 0.1724  data: 0.0001  max mem: 6708
+[05:10:40.086247] Epoch: [0]  [300/511]  eta: 0:00:53  lr: 0.000018  loss: 0.4630 (1.3000)  high_loss: 0.4630 (1.3000)  grad_norm: 5.9059 (inf)  time: 0.1730  data: 0.0001  max mem: 6708
+[05:10:42.159386] Epoch: [0]  [312/511]  eta: 0:00:50  lr: 0.000018  loss: 0.4503 (1.2672)  high_loss: 0.4503 (1.2672)  grad_norm: 5.8140 (inf)  time: 0.1727  data: 0.0001  max mem: 6708
+[05:10:44.232169] Epoch: [0]  [324/511]  eta: 0:00:46  lr: 0.000019  loss: 0.4423 (1.2365)  high_loss: 0.4423 (1.2365)  grad_norm: 5.3606 (inf)  time: 0.1726  data: 0.0001  max mem: 6708
+[05:10:46.300423] Epoch: [0]  [336/511]  eta: 0:00:43  lr: 0.000020  loss: 0.4205 (1.2073)  high_loss: 0.4205 (1.2073)  grad_norm: 4.4813 (inf)  time: 0.1723  data: 0.0001  max mem: 6708
+[05:10:48.387522] Epoch: [0]  [348/511]  eta: 0:00:39  lr: 0.000020  loss: 0.4107 (1.1800)  high_loss: 0.4107 (1.1800)  grad_norm: 4.0208 (inf)  time: 0.1732  data: 0.0001  max mem: 6708
+[05:10:50.465298] Epoch: [0]  [360/511]  eta: 0:00:36  lr: 0.000021  loss: 0.4066 (1.1541)  high_loss: 0.4066 (1.1541)  grad_norm: 3.1296 (inf)  time: 0.1736  data: 0.0001  max mem: 6708
+[05:10:52.537608] Epoch: [0]  [372/511]  eta: 0:00:33  lr: 0.000022  loss: 0.3903 (1.1296)  high_loss: 0.3903 (1.1296)  grad_norm: 3.0683 (inf)  time: 0.1727  data: 0.0001  max mem: 6708
+[05:10:54.610886] Epoch: [0]  [384/511]  eta: 0:00:30  lr: 0.000023  loss: 0.3916 (1.1066)  high_loss: 0.3916 (1.1066)  grad_norm: 3.0176 (inf)  time: 0.1725  data: 0.0001  max mem: 6708
+[05:10:56.682958] Epoch: [0]  [396/511]  eta: 0:00:27  lr: 0.000023  loss: 0.3908 (1.0850)  high_loss: 0.3908 (1.0850)  grad_norm: 2.8740 (inf)  time: 0.1724  data: 0.0001  max mem: 6708
+[05:10:58.775662] Epoch: [0]  [408/511]  eta: 0:00:24  lr: 0.000024  loss: 0.3770 (1.0642)  high_loss: 0.3770 (1.0642)  grad_norm: 2.6836 (inf)  time: 0.1736  data: 0.0001  max mem: 6708
+[05:11:00.916521] Epoch: [0]  [420/511]  eta: 0:00:21  lr: 0.000025  loss: 0.3722 (1.0445)  high_loss: 0.3722 (1.0445)  grad_norm: 2.5683 (inf)  time: 0.1769  data: 0.0001  max mem: 6708
+[05:11:03.042843] Epoch: [0]  [432/511]  eta: 0:00:18  lr: 0.000025  loss: 0.3722 (1.0259)  high_loss: 0.3722 (1.0259)  grad_norm: 2.2269 (inf)  time: 0.1776  data: 0.0001  max mem: 6708
+[05:11:05.210497] Epoch: [0]  [444/511]  eta: 0:00:15  lr: 0.000026  loss: 0.3591 (1.0079)  high_loss: 0.3591 (1.0079)  grad_norm: 2.2269 (inf)  time: 0.1791  data: 0.0001  max mem: 6708
+[05:11:07.386358] Epoch: [0]  [456/511]  eta: 0:00:12  lr: 0.000027  loss: 0.3548 (0.9909)  high_loss: 0.3548 (0.9909)  grad_norm: 2.2016 (inf)  time: 0.1809  data: 0.0001  max mem: 6708
+[05:11:09.537434] Epoch: [0]  [468/511]  eta: 0:00:09  lr: 0.000027  loss: 0.3541 (0.9747)  high_loss: 0.3541 (0.9747)  grad_norm: 2.1017 (inf)  time: 0.1799  data: 0.0001  max mem: 6708
+[05:11:11.664654] Epoch: [0]  [480/511]  eta: 0:00:06  lr: 0.000028  loss: 0.3434 (0.9588)  high_loss: 0.3434 (0.9588)  grad_norm: 2.2053 (inf)  time: 0.1777  data: 0.0001  max mem: 6708
+[05:11:13.797146] Epoch: [0]  [492/511]  eta: 0:00:04  lr: 0.000029  loss: 0.3405 (0.9439)  high_loss: 0.3405 (0.9439)  grad_norm: 2.4239 (inf)  time: 0.1773  data: 0.0001  max mem: 6708
+[05:11:15.921531] Epoch: [0]  [504/511]  eta: 0:00:01  lr: 0.000030  loss: 0.3408 (0.9295)  high_loss: 0.3408 (0.9295)  grad_norm: 2.3220 (inf)  time: 0.1771  data: 0.0001  max mem: 6708
+[05:11:16.973074] Epoch: [0]  [510/511]  eta: 0:00:00  lr: 0.000030  loss: 0.3405 (0.9225)  high_loss: 0.3405 (0.9225)  grad_norm: 2.2348 (inf)  time: 0.1763  data: 0.0001  max mem: 6708
+[05:11:17.061751] Epoch: [0] Total time: 0:01:53 (0.2226 s / it)
+/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[05:11:17.064130] Averaged stats: lr: 0.000030  loss: 0.3405 (0.9225)  high_loss: 0.3405 (0.9225)  grad_norm: 2.2348 (inf)
+/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py:34: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with torch.cuda.amp.autocast():
+[05:11:20.344989] Training time 0:01:57
+ABLATION_L1_DEBUG_DONE

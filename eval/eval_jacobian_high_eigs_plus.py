@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""High-field Jacobian eigenvalues for FutureINNPlus (coarses held fixed).
+"""Jacobian eigenvalues for FutureINNPlus on ground-truth staggered inputs.
 
-Does not modify eval_jacobian_high_eigs.py. Differentiates next high w.r.t.
-current high with coarse latents frozen, then advances with the full AR step.
+Does not modify eval_jacobian_high_eigs.py. At each step k of
+n_jac_steps = horizon - num_coarse, linearizes the full-step map at
+high = frame k and coarse i = pool(frame k+1+i), matching model_plus.py.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse.linalg as spla
 import torch
+from torch.nn import functional as F
 
 from eval_jacobian_manual_mse_plus import (
     choose_sections,
@@ -31,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--jacobian",
         choices=["high", "full"],
-        default="high",
-        help="high: next-high vs high (coarses fixed). full: square map over (high,coarses)",
+        default="full",
+        help="full (default): square map over (high,coarses). high: next-high vs high (coarses fixed)",
     )
     p.add_argument("--every-nth-field", type=int, default=5)
     p.add_argument("--eval-dir", default="/global/homes/d/divyam/TACSLAB/eval")
@@ -73,6 +75,7 @@ def reset_peak_gpu() -> None:
 
 
 def warmup_coarses(ema_vit, model, high: torch.Tensor):
+    """Legacy AR warmup; eigenvalue path uses gt_plus_state instead."""
     b = high.shape[0]
     device = high.device
     dtype = high.dtype
@@ -95,6 +98,45 @@ def _t_full(model, high: torch.Tensor) -> torch.Tensor:
     return float(model.num_coarse) * torch.ones(
         high.shape[0], device=high.device, dtype=high.dtype
     )
+
+
+def gt_plus_state(
+    frames: list,
+    step: int,
+    model,
+    device: torch.device,
+    dtype: torch.dtype,
+    norm: float,
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    """Training full-step inputs: high=k, coarse i = pool(k+1+i)."""
+    k = model.num_coarse
+    if step + k >= len(frames):
+        raise ValueError(
+            f"step {step} needs frames through {step + k}, "
+            f"section has {len(frames)}"
+        )
+    high = (
+        torch.from_numpy(np.asarray(frames[step], dtype=np.float32))
+        .to(device=device, dtype=dtype)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        / norm
+    )
+    coarses: list[torch.Tensor] = []
+    for i in range(k):
+        src = (
+            torch.from_numpy(np.asarray(frames[step + 1 + i], dtype=np.float32))
+            .to(device=device, dtype=dtype)
+            .unsqueeze(0)
+            .unsqueeze(0)
+            / norm
+        )
+        coarses.append(
+            F.avg_pool2d(
+                src, kernel_size=model.ds_factors[i], stride=model.ds_factors[i]
+            ).detach()
+        )
+    return high.detach(), coarses
 
 
 def pack_plus_state(high: torch.Tensor, coarses: list[torch.Tensor]) -> torch.Tensor:
@@ -296,11 +338,16 @@ def main() -> None:
         flush=True,
     )
 
-    init_np = np.asarray(frames[0], dtype=np.float32)
-    high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
+    n_jac_steps = args.horizon - model.num_coarse
+    if n_jac_steps < 1:
+        raise ValueError(
+            f"horizon must be > num_coarse={model.num_coarse} for "
+            f"ground-truth stagger, got {args.horizon}"
+        )
     dtype = next(ema_vit.parameters()).dtype
-    high = high.to(dtype)
-    coarses = warmup_coarses(ema_vit, model, high)
+    high, coarses = gt_plus_state(
+        frames, 0, model, device, dtype, args.norm
+    )
 
     if args.jacobian == "high":
         n = int(high.numel())
@@ -308,7 +355,8 @@ def main() -> None:
         n = int(high.numel() + sum(c.numel() for c in coarses))
     jvp_s = time_one_jvp(ema_vit, model, high, coarses, jacobian=args.jacobian)
     print(
-        f"one_jvp_s={jvp_s:.4f} jacobian={args.jacobian} state_dim={n}",
+        f"one_jvp_s={jvp_s:.4f} jacobian={args.jacobian} "
+        f"state_dim={n} n_jac_steps={n_jac_steps}",
         flush=True,
     )
 
@@ -318,14 +366,19 @@ def main() -> None:
         f"checkpoint={args.checkpoint}",
         f"section={int(chosen[0])}",
         f"horizon={args.horizon}",
+        f"n_jac_steps={n_jac_steps}",
+        "frame_rule=high=k coarse_i=pool(k+1+i)",
         f"state_dim={n}",
         f"one_jvp_s={jvp_s:.6f}",
         f"device={device}",
         f"latent_res={model.latent_res}",
+        f"num_coarse={model.num_coarse}",
     ]
 
-    tK = _t_full(model, high)
-    for step in range(args.horizon):
+    for step in range(n_jac_steps):
+        high, coarses = gt_plus_state(
+            frames, step, model, device, dtype, args.norm
+        )
         out_path = step_path(save_dir, step)
         if args.skip_existing and out_path.is_file():
             print(f"step {step}: skip existing {out_path}", flush=True)
@@ -376,12 +429,6 @@ def main() -> None:
             f"step_{step}=ok radius={radius:.6g} wall_s={wall_s:.2f} "
             f"peak_gpu_mib={peak_mib:.1f}"
         )
-
-        if step + 1 < args.horizon:
-            with torch.no_grad():
-                high, coarses = ema_vit(high, coarses, tK)
-            high = high.detach()
-            coarses = [c.detach() for c in coarses]
 
     summary_path = save_dir / "summary.txt"
     summary_path.write_text("\n".join(summary_lines) + "\n")

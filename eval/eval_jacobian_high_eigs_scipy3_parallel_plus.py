@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Multi-GPU scipy high-field Jacobian eigs for FutureINNPlus.
+"""Multi-GPU scipy Jacobian eigs for FutureINNPlus on ground-truth inputs.
 
-Does not modify eval_jacobian_high_eigs_scipy3_parallel.py.
+Does not modify eval_jacobian_high_eigs_scipy3_parallel.py. Each worker
+linearizes at staggered ground-truth states (n_jac_steps = horizon - num_coarse).
 """
 
 from __future__ import annotations
@@ -23,13 +24,13 @@ import torch
 
 from eval_jacobian_high_eigs_plus import (
     _t_full,
+    gt_plus_state,
     pack_plus_state,
     peak_gpu_mib,
     reset_peak_gpu,
     step_path,
     time_one_jvp,
     unpack_plus_state,
-    warmup_coarses,
 )
 from eval_jacobian_manual_mse_plus import (
     choose_sections,
@@ -64,8 +65,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--jacobian",
         choices=["high", "full"],
-        default="high",
-        help="high: next-high vs high (coarses fixed). full: square map over (high,coarses)",
+        default="full",
+        help="full (default): square map over (high,coarses). high: next-high vs high (coarses fixed)",
     )
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args(argv)
@@ -186,11 +187,16 @@ def run_worker(args: argparse.Namespace) -> None:
     )
 
     model, ema_vit = load_model(args.checkpoint, device)
-    init_np = np.asarray(frames[0], dtype=np.float32)
-    high = torch.from_numpy(init_np).to(device).unsqueeze(0).unsqueeze(0) / args.norm
+    n_jac_steps = args.horizon - model.num_coarse
+    if n_jac_steps < 1:
+        raise ValueError(
+            f"horizon must be > num_coarse={model.num_coarse} for "
+            f"ground-truth stagger, got {args.horizon}"
+        )
     dtype = next(ema_vit.parameters()).dtype
-    high = high.to(dtype)
-    coarses = warmup_coarses(ema_vit, model, high)
+    high, coarses = gt_plus_state(
+        frames, 0, model, device, dtype, args.norm
+    )
 
     if args.jacobian == "high":
         n = int(high.numel())
@@ -199,7 +205,7 @@ def run_worker(args: argparse.Namespace) -> None:
     jvp_s = time_one_jvp(ema_vit, model, high, coarses, jacobian=args.jacobian)
     print(
         f"[section {section_id}] one_jvp_s={jvp_s:.4f} "
-        f"jacobian={args.jacobian} state_dim={n}",
+        f"jacobian={args.jacobian} state_dim={n} n_jac_steps={n_jac_steps}",
         flush=True,
     )
 
@@ -210,13 +216,18 @@ def run_worker(args: argparse.Namespace) -> None:
         f"section_index={args.section_index}",
         f"section_id={section_id}",
         f"horizon={args.horizon}",
+        f"n_jac_steps={n_jac_steps}",
+        "frame_rule=high=k coarse_i=pool(k+1+i)",
         f"state_dim={n}",
         f"one_jvp_s={jvp_s:.6f}",
         f"latent_res={model.latent_res}",
+        f"num_coarse={model.num_coarse}",
     ]
-    tK = _t_full(model, high)
 
-    for step in range(args.horizon):
+    for step in range(n_jac_steps):
+        high, coarses = gt_plus_state(
+            frames, step, model, device, dtype, args.norm
+        )
         out_path = step_path(save_dir, step)
         print(f"[section {section_id}] step {step}: computing scipy eigs ...", flush=True)
         reset_peak_gpu()
@@ -258,12 +269,6 @@ def run_worker(args: argparse.Namespace) -> None:
             flush=True,
         )
         summary_lines.append(f"step_{step}=ok radius={radius:.6g} wall_s={wall_s:.2f}")
-
-        if step + 1 < args.horizon:
-            with torch.no_grad():
-                high, coarses = ema_vit(high, coarses, tK)
-            high = high.detach()
-            coarses = [c.detach() for c in coarses]
 
     (save_dir / "summary.txt").write_text("\n".join(summary_lines) + "\n")
     print(f"[section {section_id}] JACOBIAN_HIGH_EIGS_PLUS_WORKER_DONE", flush=True)

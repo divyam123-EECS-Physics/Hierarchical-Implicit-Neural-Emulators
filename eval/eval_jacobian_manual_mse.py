@@ -333,6 +333,78 @@ def plot_mse_curves(
     return out
 
 
+def consistency_mse_l3(
+    pred_high: np.ndarray,
+    pred_mid: np.ndarray,
+    pred_low: np.ndarray,
+    ds_factor: int,
+    ds_factor_low: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Latent vs later pooled high prediction for the same frame.
+
+    mid[k] (frame k+2) vs pool(high[k+1], ds_factor)
+    low[k] (frame k+3) vs pool(high[k+2], ds_factor_low)
+
+    Returns (consist_mid [B, T-1], consist_low [B, T-2]).
+    """
+    high = torch.from_numpy(np.asarray(pred_high))
+    mid = torch.from_numpy(np.asarray(pred_mid))
+    low = torch.from_numpy(np.asarray(pred_low))
+    b, t = high.shape[:2]
+    if t < 2:
+        raise ValueError(f"need at least 2 steps for mid consistency, got T={t}")
+    if t < 3:
+        raise ValueError(f"need at least 3 steps for low consistency, got T={t}")
+
+    pooled_mid = F.avg_pool2d(
+        high[:, 1:].reshape(-1, *high.shape[2:]),
+        kernel_size=ds_factor,
+        stride=ds_factor,
+    ).reshape(b, t - 1, *mid.shape[2:])
+    consist_mid = (
+        (mid[:, : t - 1] - pooled_mid).pow(2).mean(dim=(2, 3, 4)).double().numpy()
+    )
+
+    pooled_low = F.avg_pool2d(
+        high[:, 2:].reshape(-1, *high.shape[2:]),
+        kernel_size=ds_factor_low,
+        stride=ds_factor_low,
+    ).reshape(b, t - 2, *low.shape[2:])
+    consist_low = (
+        (low[:, : t - 2] - pooled_low).pow(2).mean(dim=(2, 3, 4)).double().numpy()
+    )
+    return consist_mid, consist_low
+
+
+def plot_consist_mse_curves(
+    save_dir: str,
+    lead: np.ndarray,
+    ar_consist_mid: np.ndarray,
+    ar_consist_low: np.ndarray,
+    tf_consist_mid: np.ndarray,
+    tf_consist_low: np.ndarray,
+) -> str:
+    series = [
+        ("mid vs pool(high)", ar_consist_mid, tf_consist_mid, lead[: ar_consist_mid.shape[1]]),
+        ("low vs pool(high)", ar_consist_low, tf_consist_low, lead[: ar_consist_low.shape[1]]),
+    ]
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    for ax, (name, ar, tf, x) in zip(axs, series):
+        for row in range(ar.shape[0]):
+            ax.plot(x, ar[row], color="C0", alpha=0.25, lw=0.8)
+            ax.plot(x, tf[row], color="C1", alpha=0.25, lw=0.8)
+        ax.plot(x, ar.mean(axis=0), color="black", lw=2.5, label="AR mean")
+        ax.plot(x, tf.mean(axis=0), color="black", lw=2.5, ls="--", label="TF mean")
+        ax.set_title(name)
+        ax.set_xlabel("lead (latent step)")
+        ax.set_ylabel("consistency MSE")
+        ax.legend()
+    out = os.path.join(save_dir, "consist_mse_vs_lead.png")
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
 def main() -> None:
     args = parse_args()
     if args.model_type != "hine":
@@ -417,6 +489,21 @@ def main() -> None:
         ema_vit, model, frames_np, args.batch_size, n_steps, device, teacher_forced=True
     )
 
+    ar_consist_mid, ar_consist_low = consistency_mse_l3(
+        ar_pred_high,
+        ar_pred_mid,
+        ar_pred_low,
+        model.ds_factor,
+        model.ds_factor_low,
+    )
+    tf_consist_mid, tf_consist_low = consistency_mse_l3(
+        tf_pred_high,
+        tf_pred_mid,
+        tf_pred_low,
+        model.ds_factor,
+        model.ds_factor_low,
+    )
+
     npz_path = os.path.join(args.save_dir, "rollout_mse.npz")
     np.savez_compressed(
         npz_path,
@@ -435,6 +522,10 @@ def main() -> None:
         tf_mse_high=tf_mse_high,
         tf_mse_mid=tf_mse_mid,
         tf_mse_low=tf_mse_low,
+        ar_consist_mid=ar_consist_mid,
+        ar_consist_low=ar_consist_low,
+        tf_consist_mid=tf_consist_mid,
+        tf_consist_low=tf_consist_low,
         lead=lead,
         file_stem=file_stem,
         target_stem=target_stem,
@@ -450,7 +541,9 @@ def main() -> None:
     print(
         f"saved {npz_path}  B={ar_mse_high.shape[0]} T={ar_mse_high.shape[1]}  "
         f"lead1 high/mid/low AR "
-        f"{ar_mse_high[:, 0].mean():.4g} / {ar_mse_mid[:, 0].mean():.4g} / {ar_mse_low[:, 0].mean():.4g}"
+        f"{ar_mse_high[:, 0].mean():.4g} / {ar_mse_mid[:, 0].mean():.4g} / {ar_mse_low[:, 0].mean():.4g}  "
+        f"consist mid/low AR "
+        f"{ar_consist_mid[:, 0].mean():.4g} / {ar_consist_low[:, 0].mean():.4g}"
     )
 
     plot_leads = [0, n_steps // 2, n_steps - 1]
@@ -488,8 +581,17 @@ def main() -> None:
         tf_mse_mid,
         tf_mse_low,
     )
+    consist_plot = plot_consist_mse_curves(
+        args.save_dir,
+        lead,
+        ar_consist_mid,
+        ar_consist_low,
+        tf_consist_mid,
+        tf_consist_low,
+    )
     print(f"wrote fields under {fields_dir}")
     print(f"wrote {mse_plot}")
+    print(f"wrote {consist_plot}")
     print("JACOBIAN_MANUAL_MSE_DONE")
 
 
