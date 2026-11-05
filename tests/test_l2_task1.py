@@ -24,13 +24,16 @@ from l2_fd_jvp import (
     apply_D,
     apply_K,
     assert_l2,
-    eps_sweep,
+    block_step,
     fd_both_uz,
     fd_both_z,
+    fd_pair,
+    validate_fd_eps,
 )
-from l2_operators import diagnose_point, rho_S
+from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS
+from l2_operators import diagnose_point, flat_diag, quotient_halfwidth, rho_S
 from l2_physical_jvp import ProxyTangent, Py2DFDTangent
-from l2_retention import running_channels
+from l2_retention import propagate_augmented, relative_residual, running_channels
 from main_plus import finalize_args
 from model_plus import FutureINNPlus
 import argparse
@@ -105,9 +108,14 @@ def test_fd_matches_dense_and_is_linear():
 def test_eps_sweep_exact_on_linear():
     lin = LinearL2()
     pt = _point(torch.Generator().manual_seed(2))
-    sweep = eps_sweep(lin.step, pt, [1e-1, 1e-2, 1e-3], tol=1e-6)
+    sweep = validate_fd_eps(lin.step, [("step0", pt)], 1e-2, tol=1e-6, seed=2, ds=2)
     assert sweep["ok"], sweep
-    assert max(sweep["consecutive_rel"]) < 1e-6
+    assert sweep["n_checks"] == 12
+    assert max(c["rel"] for c in sweep["checks"]) < 1e-6
+    fine = next(c for c in sweep["checks"] if c["name"].endswith("/fine") and c["block"] == "g")
+    latent = next(c for c in sweep["checks"] if c["name"].endswith("/latent") and c["block"] == "h")
+    assert fine["rel_z"] == 0.0 and abs(fine["rel_u"] - 1e-2) < 1e-8
+    assert latent["rel_u"] == 0.0 and abs(latent["rel_z"] - 1e-2) < 1e-8
 
 
 def test_compositions_and_trace_identity():
@@ -139,7 +147,12 @@ def test_compositions_and_trace_identity():
         n_probes=8, seed=0, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
     )
     assert diag["approximation"] == "proxy"
-    assert abs(diag["identity_gap"]) < 1e-6
+    assert "identity_gap" not in diag
+    assert diag["composition_rel_mean"] < 1e-6
+    assert diag["trace_estimator_same_operator"] is True
+    flat = flat_diag(diag)
+    missing = [key for key in DIAG_KEYS if key not in flat]
+    assert not missing, missing
     # Hutchinson of A should sit near the true trace.
     diag_h = diagnose_point(
         lin.step, pt, ds, 1e-3, ProxyTangent(), dt=0.25, norm=10.0,
@@ -210,9 +223,161 @@ def test_retention_bookkeeping():
     assert abs(out["R"][3] - out["rho_norm"][3]) > 1e-4
 
 
+def test_large_eps_on_cubic():
+    def step(u, z):
+        return u ** 3, z ** 3
+
+    gen = torch.Generator().manual_seed(11)
+    pt = _point(gen)
+    v = torch.randn_like(pt.u)
+    true = (3.0 * pt.u ** 2 * v).reshape_as(v)
+    small = apply_A(step, pt, v, 1e-5)
+    large = apply_A(step, pt, v, 0.5)
+    assert torch.allclose(small, true, atol=1e-6, rtol=1e-5)
+    assert not torch.allclose(large, true, atol=1e-3, rtol=1e-3)
+    bad = validate_fd_eps(step, [("step0", pt)], 0.5, tol=1e-3, seed=11, ds=2)
+    good = validate_fd_eps(step, [("step0", pt)], 1e-4, tol=1e-3, seed=11, ds=2)
+    assert not bad["ok"], bad["worst"]
+    assert good["ok"], good["worst"]
+
+
+def test_latent_step_uses_latent_scale():
+    u = torch.ones(1, 1, 4, 4, dtype=torch.float64) * 10.0
+    z = torch.ones(1, 1, 2, 2, dtype=torch.float64) * 1e-3
+    du = torch.zeros_like(u)
+    dz = torch.ones_like(z)
+    info = block_step(u, z, du, dz, 1e-2)
+    assert info["rel_u"] == 0.0
+    assert abs(info["rel_z"] - 1e-2) < 1e-8
+    joint = torch.sqrt(u.reshape(-1).pow(2).sum() + z.reshape(-1).pow(2).sum())
+    old_h = 1e-2 * float(joint) / float(dz.reshape(-1).norm())
+    assert info["h"] < 0.1 * old_h
+    dg, dh, got = fd_pair(lambda a, b: (a, b), u, z, torch.zeros_like(u), torch.zeros_like(z), 1e-2)
+    assert got["zero"]
+    assert float(dg.abs().sum()) == 0.0 and float(dh.abs().sum()) == 0.0
+
+
+def test_independent_composition_not_tautology():
+    def step(u, z):
+        return u + 0.2 * u ** 3, z
+
+    gen = torch.Generator().manual_seed(12)
+    pt = _point(gen)
+    ds = 2
+    v = torch.randn_like(pt.u)
+    w = apply_D(v, ds)
+    Jv, _ = fd_both_uz(step, pt, v, w, 0.4)
+    Av = apply_A(step, pt, v, 0.4)
+    Bw = apply_B(step, pt, w, 0.4)
+    independent = float((Jv - Av - Bw).norm() / Jv.norm().clamp(min=1e-12))
+    tautology = float((Jv - Av - (Jv - Av)).norm())
+    assert tautology == 0.0
+    assert independent > 1e-4
+    diag = diagnose_point(
+        step, pt, ds, 0.4, ProxyTangent(), dt=0.25, norm=10.0,
+        n_probes=4, seed=12, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
+    )
+    assert diag["composition_rel_mean"] > 1e-4
+
+
+class _ScaleTangent:
+    name = "py2d_fd"
+    is_exact = False
+
+    def apply(self, u_phys, v_phys):
+        factor = 2.0 if float(np.mean(u_phys)) >= 0.0 else 0.5
+        return np.asarray(v_phys, dtype=np.float64) * factor
+
+
+def test_distinct_tangents_at_n_and_n_plus_1():
+    lin = LinearL2(seed=8)
+    gen = torch.Generator().manual_seed(9)
+    u = torch.ones(1, 1, 4, 4, dtype=torch.float64)
+    u_next = -torch.ones_like(u)
+    z = torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64)
+    pt = L2Point(u, z, torch.ones(1, dtype=torch.float64), u_next, z.clone(), (0, 1, 2))
+    common = dict(dt=0.25, norm=10.0, n_probes=6, seed=3, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6)
+    proxy = diagnose_point(lin.step, pt, 2, 1e-4, ProxyTangent(), **common)
+    scaled = diagnose_point(lin.step, pt, 2, 1e-4, _ScaleTangent(), **common)
+    assert np.allclose(proxy["tr_DB"]["probes"], scaled["tr_DB"]["probes"], atol=1e-5, rtol=1e-5)
+    assert np.allclose(scaled["tr_DPhi_next_B"]["probes"], 0.5 * scaled["tr_DB"]["probes"], atol=1e-4, rtol=1e-4)
+    assert np.allclose(scaled["tr_B_DPhi_n"]["probes"], 2.0 * proxy["tr_B_DPhi_n"]["probes"], atol=1e-4, rtol=1e-4)
+    assert abs(scaled["tr_DB"]["mean"] - scaled["tr_DPhi_next_B"]["mean"]) > 1e-8
+
+
+def test_augmented_linearization_matches_dense_affine():
+    lin = LinearL2(seed=7)
+    gen = torch.Generator().manual_seed(13)
+    bu = torch.randn(16, generator=gen, dtype=torch.float64) * 0.01
+    bz = torch.randn(4, generator=gen, dtype=torch.float64) * 0.01
+
+    def step(u, z):
+        g, h = lin.step(u, z)
+        return g + bu.reshape_as(u).to(dtype=u.dtype), h + bz.reshape_as(z).to(dtype=z.dtype)
+
+    points = []
+    for _ in range(4):
+        u = torch.randn(1, 1, 4, 4, generator=gen, dtype=torch.float64)
+        z = torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64)
+        u_next = torch.randn(1, 1, 4, 4, generator=gen, dtype=torch.float64)
+        z_next = torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64)
+        points.append(L2Point(u, z, torch.ones(1, dtype=torch.float64), u_next, z_next, (0, 1, 2)))
+    eps_u, eps_z = [], []
+    for pt in points:
+        g, h = step(pt.u, pt.z)
+        eps_u.append(g - pt.u_next)
+        eps_z.append(h - pt.z_next)
+    e_lin, eta_lin = propagate_augmented(lambda _n: step, points, eps_u, eps_z, 1e-5)
+
+    e = torch.zeros_like(points[0].u)
+    eta = torch.zeros_like(points[0].z)
+    dense_e = [e.clone()]
+    dense_eta = [eta.clone()]
+    for n in range(4):
+        e_next = (lin.A @ _flat(e) + lin.B @ _flat(eta)).reshape_as(e).to(dtype=e.dtype) + eps_u[n]
+        eta_next = (lin.C @ _flat(e) + lin.K @ _flat(eta)).reshape_as(eta).to(dtype=eta.dtype) + eps_z[n]
+        e, eta = e_next, eta_next
+        dense_e.append(e)
+        dense_eta.append(eta)
+    for got, ref in zip(e_lin, dense_e):
+        assert torch.allclose(got, ref, atol=1e-6, rtol=1e-5)
+    for got, ref in zip(eta_lin, dense_eta):
+        assert torch.allclose(got, ref, atol=1e-6, rtol=1e-5)
+
+    high = points[0].u.clone()
+    z = points[0].z.clone()
+    actual_e = [torch.zeros_like(high)]
+    actual_eta = [torch.zeros_like(z)]
+    for n, pt in enumerate(points):
+        high, z = step(high, z)
+        actual_e.append(high - pt.u_next)
+        actual_eta.append(z - pt.z_next)
+    for got, ref in zip(actual_e, e_lin):
+        assert torch.allclose(got, ref, atol=1e-6, rtol=1e-5)
+    for got, ref in zip(actual_eta, eta_lin):
+        assert torch.allclose(got, ref, atol=1e-6, rtol=1e-5)
+    for key in ("e_lin_norm", "eta_norm", "eta_lin_norm", "e_lin_err", "eta_lin_err", "recon_lin_norm"):
+        assert key in ROLL_KEYS
+
+
+def test_confidence_interval_and_relative_residual():
+    scaled = quotient_halfwidth(1.96, 16, 0.25)
+    assert abs(float(scaled) - 1.96 / (16 * 0.25)) < 1e-12
+    assert abs(float(scaled) - 1.96 / 16) > 1e-3
+    recon = np.array([[2.0, 0.0], [4.0, 1.0]])
+    rho = np.array([[4.0, 1e-16], [1.0, 2.0]])
+    rel = relative_residual(recon, rho, floor=1e-12)
+    assert np.isnan(rel[0, 1])
+    ratios = np.array([0.5, 4.0, 0.5])
+    assert abs(np.nanmean(rel) - ratios.mean()) < 1e-12
+    ratio_of_means = recon.mean() / rho.mean()
+    assert abs(ratio_of_means - np.nanmean(rel)) > 0.1
+
+
 def test_labels_and_l2_model():
     assert ProxyTangent().is_exact is False
-    assert Py2DFDTangent().is_exact is True
+    assert Py2DFDTangent().is_exact is False
+    assert Py2DFDTangent().name == "py2d_fd"
     model = FutureINNPlus(finalize_args(_ns(hierarchy_L=2, ds_factors=[8])))
     assert_l2(model)
     x = torch.randn(2, 1, 256, 256)
@@ -232,7 +397,13 @@ def test_labels_and_l2_model():
 if __name__ == "__main__":
     test_fd_matches_dense_and_is_linear()
     test_eps_sweep_exact_on_linear()
+    test_large_eps_on_cubic()
+    test_latent_step_uses_latent_scale()
     test_compositions_and_trace_identity()
+    test_independent_composition_not_tautology()
+    test_distinct_tangents_at_n_and_n_plus_1()
+    test_augmented_linearization_matches_dense_affine()
+    test_confidence_interval_and_relative_residual()
     test_rho_S_matches_dense()
     test_retention_bookkeeping()
     test_labels_and_l2_model()

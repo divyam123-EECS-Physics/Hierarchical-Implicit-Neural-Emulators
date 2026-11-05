@@ -1,7 +1,8 @@
 """Injection and first-factor retention channels for direct-step L=2 HINE.
 
-I_n, R_n, rho_n are exact bookkeeping on the rollout (Eq. 5.1, 5.2, 10.2).
-r_H and r_z are first-factor approximations, not an exact split of rho.
+I_n, R_n, rho_n are bookkeeping on the rollout.
+r_H and r_z are a truncated one-factor approximation, not a split of rho.
+A large reconstruction residual is not automatically an implementation bug.
 Proxy mode uses xi = eps_z - D eps_u and J_phys = A + B D.
 """
 
@@ -10,8 +11,9 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from l2_fd_jvp import L2Point, apply_D, fd_both_uz, fd_both_z, model_step
+from l2_fd_jvp import FD_OUTPUT_FLOOR, L2Point, apply_D, fd_both_uz, fd_both_z, model_step
 from l2_operators import _phi_image
+from l2_physical_jvp import is_proxy
 
 
 def _norm(x: torch.Tensor) -> float:
@@ -26,21 +28,36 @@ def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(torch.dot(a.reshape(-1).double(), b.reshape(-1).double()) / (na * nb))
 
 
+def relative_residual(numer: np.ndarray, denom: np.ndarray, floor: float = FD_OUTPUT_FLOOR) -> np.ndarray:
+    """Per-entry numer/denom. Entries with denom at or below the floor are masked."""
+    numer = np.asarray(numer, dtype=np.float64)
+    denom = np.asarray(denom, dtype=np.float64)
+    rel = np.full(numer.shape, np.nan, dtype=np.float64)
+    mask = np.isfinite(denom) & (denom > floor)
+    rel[mask] = numer[mask] / np.maximum(denom[mask], floor)
+    return rel
+
+
 def running_channels(
     e: list[torch.Tensor],
     eps_u: list[torch.Tensor],
     xi: list[torch.Tensor],
     apply_J_minus_I,
     apply_B,
+    e_lin: list[torch.Tensor] | None = None,
 ) -> dict[str, np.ndarray]:
     """First-factor sums. e[0] is the initial fine error (zero on a fresh start).
 
     e has length T+1. eps_u and xi have length T.
-    apply_J_minus_I(k, vec) and apply_B(k, vec) act at step k.
+    apply_J_minus_I(k, vec) and apply_B(k, vec) act at step k, on injections
+    accumulated before step k. r_H and r_z are a truncated approximation.
+    If e_lin is given, also records ||rho_lin - r_H - r_z||.
     """
     t = len(eps_u)
     if len(e) != t + 1 or len(xi) != t:
         raise ValueError(f"length mismatch e={len(e)} eps={t} xi={len(xi)}")
+    if e_lin is not None and len(e_lin) != t + 1:
+        raise ValueError(f"e_lin length {len(e_lin)} != {t + 1}")
     S = torch.zeros_like(e[0])
     Z = torch.zeros_like(xi[0])
     rH = torch.zeros_like(e[0])
@@ -51,6 +68,7 @@ def running_channels(
     rH_n = np.zeros(t + 1)
     rZ_n = np.zeros(t + 1)
     resid = np.zeros(t + 1)
+    lin_resid = np.full(t + 1, np.nan)
     align = np.full(t + 1, np.nan)
     e_n = np.zeros(t + 1)
     for n in range(t + 1):
@@ -62,6 +80,8 @@ def running_channels(
         rH_n[n] = _norm(rH)
         rZ_n[n] = _norm(rZ)
         resid[n] = _norm(rho - rH - rZ)
+        if e_lin is not None:
+            lin_resid[n] = _norm(e_lin[n] - S - rH - rZ)
         align[n] = _cos(rH, rZ)
         if n == t:
             break
@@ -70,7 +90,7 @@ def running_channels(
             rZ = rZ + apply_B(n, Z)
         S = S + eps_u[n]
         Z = Z + xi[n]
-    return {
+    out = {
         "I": I,
         "R": R,
         "e_norm": e_n,
@@ -80,6 +100,62 @@ def running_channels(
         "recon_norm": resid,
         "cos_rH_rZ": align,
     }
+    if e_lin is not None:
+        out["recon_lin_norm"] = lin_resid
+    return out
+
+
+def propagate_augmented(step_at, points: list[L2Point], eps_u, eps_z, eps_rel: float):
+    """Full linearized fine and latent errors along teacher-forced points.
+
+    step_at(n) is the map at teacher-forced step n.
+    e_lin,0 = eta_lin,0 = 0. One mixed centered difference supplies both
+    block rows. The initial zero direction adds only the injections.
+    """
+    if len(points) != len(eps_u) or len(eps_u) != len(eps_z):
+        raise ValueError("points, eps_u, and eps_z must have the same length")
+    e_lin = [torch.zeros_like(points[0].u)]
+    eta_lin = [torch.zeros_like(points[0].z)]
+    for n, pt in enumerate(points):
+        if _norm(e_lin[n]) == 0.0 and _norm(eta_lin[n]) == 0.0:
+            dg = torch.zeros_like(e_lin[n])
+            dh = torch.zeros_like(eta_lin[n])
+        else:
+            dg, dh = fd_both_uz(step_at(n), pt, e_lin[n], eta_lin[n], eps_rel)
+        e_lin.append(dg + eps_u[n])
+        eta_lin.append(dh + eps_z[n])
+    return e_lin, eta_lin
+
+
+def _capture_retention_directions(points, eps_u, xi, sink: list) -> None:
+    """First nonzero accumulated injections, in model coordinates."""
+    S = torch.zeros_like(eps_u[0])
+    Z = torch.zeros_like(xi[0])
+    saw_s = False
+    saw_z = False
+    for n in range(len(eps_u)):
+        if not saw_s and _norm(S) > 0.0:
+            sink.append(
+                {
+                    "name": f"retention_S_step{n}",
+                    "point": points[n],
+                    "du": S.detach().clone(),
+                    "dz": torch.zeros_like(points[n].z),
+                }
+            )
+            saw_s = True
+        if n >= 1 and not saw_z and _norm(Z) > 0.0:
+            sink.append(
+                {
+                    "name": f"retention_Z_step{n}",
+                    "point": points[n],
+                    "du": torch.zeros_like(points[n].u),
+                    "dz": Z.detach().clone(),
+                }
+            )
+            saw_z = True
+        S = S + eps_u[n]
+        Z = Z + xi[n]
 
 
 @torch.no_grad()
@@ -93,6 +169,7 @@ def rollout_diagnostics(
     eps_rel: float,
     tangent,
     n_steps: int,
+    direction_sink: list | None = None,
 ) -> dict[str, np.ndarray]:
     """Free AR rollout plus teacher-forced injections on one window.
 
@@ -119,22 +196,32 @@ def rollout_diagnostics(
         g, h = model_step(ema_vit, pt.u, pt.z, pt.t)
         eu = g - pt.u_next
         ez = h - pt.z_next
-        if tangent.is_exact:
+        if is_proxy(tangent):
+            xi_k = ez - apply_D(eu, ds)
+        else:
             img = _phi_image(tangent, pt.u_next, eu, norm)
             xi_k = ez - apply_D(img, ds)
-        else:
-            xi_k = ez - apply_D(eu, ds)
         eps_u.append(eu)
         eps_z.append(ez)
         xi.append(xi_k)
 
-    # Free rollout from (u_0, D u_1). e_0 = 0.
+    if direction_sink is not None:
+        _capture_retention_directions(points, eps_u, xi, direction_sink)
+
+    # Free rollout from (u_0, D u_1). e_0 = eta_0 = 0.
     high = points[0].u.clone()
     z = points[0].z.clone()
     e = [torch.zeros_like(high)]
+    eta = [torch.zeros_like(z)]
     for k in range(n_steps):
         high, z = model_step(ema_vit, high, z, points[k].t)
         e.append(high - points[k].u_next)
+        eta.append(z - points[k].z_next)
+
+    def step_at(k: int):
+        return lambda u, z, _t=points[k].t: model_step(ema_vit, u, z, _t)
+
+    e_lin, eta_lin = propagate_augmented(step_at, points, eps_u, eps_z, eps_rel)
 
     def apply_J_minus_I(k: int, vec: torch.Tensor) -> torch.Tensor:
         if _norm(vec) == 0.0:
@@ -160,8 +247,11 @@ def rollout_diagnostics(
         )
         return Bw
 
-    # Scale to physical units for the reported norms.
+    # Scale to physical units for the reported norms and vector differences.
     e_phys = [t * norm for t in e]
+    eta_phys = [t * norm for t in eta]
+    e_lin_phys = [t * norm for t in e_lin]
+    eta_lin_phys = [t * norm for t in eta_lin]
     eu_phys = [t * norm for t in eps_u]
     xi_phys = [t * norm for t in xi]
 
@@ -171,9 +261,14 @@ def rollout_diagnostics(
     def B_phys(k, w_phys):
         return apply_B(k, w_phys / norm) * norm
 
-    out = running_channels(e_phys, eu_phys, xi_phys, J_phys, B_phys)
+    out = running_channels(e_phys, eu_phys, xi_phys, J_phys, B_phys, e_lin=e_lin_phys)
     out["eps_u_norm"] = np.asarray([_norm(t) for t in eu_phys])
     out["eps_z_norm"] = np.asarray([_norm(t * norm) for t in eps_z])
-    out["approximation"] = np.asarray("exact" if tangent.is_exact else "proxy")
-    out["first_factor"] = np.asarray(True)
+    out["e_lin_norm"] = np.asarray([_norm(t) for t in e_lin_phys])
+    out["eta_norm"] = np.asarray([_norm(t) for t in eta_phys])
+    out["eta_lin_norm"] = np.asarray([_norm(t) for t in eta_lin_phys])
+    out["e_lin_err"] = np.asarray([_norm(a - b) for a, b in zip(e_phys, e_lin_phys)])
+    out["eta_lin_err"] = np.asarray([_norm(a - b) for a, b in zip(eta_phys, eta_lin_phys)])
+    out["approximation"] = np.asarray("proxy" if is_proxy(tangent) else "py2d_fd")
+    out["first_factor"] = np.asarray("truncated")
     return out

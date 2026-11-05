@@ -12,43 +12,60 @@ is not used. `D` is `avg_pool2d` with the checkpoint's `ds_factors[0]` (8 for
 the 256→32 L=2 run). Fields inside the network are `Omega / --norm`. Reported
 error norms are multiplied back by `--norm`.
 
+Finite-difference step sizes are block-aware. One scalar `h` makes the larger
+of the fine and latent relative perturbations equal `--fd-eps`. Each block is
+scaled by `max(||block||, 1e-8 * sqrt(numel))`. A zero direction returns zeros.
+The selected `--fd-eps` is compared with `eps/3` and `eps/10` on fine-only,
+latent-only, and graph directions, and on `g` and `h` separately. Random
+directions use `--seed`. Failure sets `fd_validated=false`, prefixes plot
+titles with `UNVALIDATED`, and exits 2. `--allow-unvalidated-fd` still writes
+files and is recorded in `metadata.json`.
+
 ## Metric → equation
 
-| output | meaning | equation | status |
-|---|---|---|---|
-| `tr_A_*`, `tr_A_over_N` | Hutchinson trace of `A = dg/du` | (5.3), (9.2) | exact up to FD and probe noise |
-| `tr_K_*` | trace of `K = dh/dz` | (5.3) | exact up to FD |
-| `tr_DB_*`, `tr_DB_over_N` | trace of `D B` from coarse probes | (9.2) second term without the `1/dt` | exact up to FD |
-| `tr_BD_paired_*` | `v·B D v` on the same fine probes as `A` | `Tr(BD)=Tr(DB)` | exact up to FD |
-| `tr_J_*`, `tr_J_over_N` | trace of `J_phys` or `J_phys_proxy` | (7.2) | exact only if `--physical-jvp py2d` |
-| `tr_Fu_over_N` | `(Tr(A) - N) / (N dt)` | (8.2), (9.2) | difference-quotient label |
-| `tr_DFz_over_N` | `Tr(DB) / (N dt)` | (9.2) | difference-quotient label |
-| `tr_Heff_over_N` | `(Tr(J) - N) / (N dt)` | (8.3), (9.2) | difference-quotient of `J`, proxy unless py2d |
-| `tr_S_*`, `tr_S_over_M` | trace of `S` or `S_proxy` | (7.8) | exact only with py2d |
-| `tr_Sigma_over_M` | `(Tr(S) - M) / (M dt)` | (8.4), (9.3) | difference-quotient label |
-| `amp_J_*` | `‖J v‖² / N` | Section 9, direct-step contraction | not a trace |
-| `offgraph_probe_*` | `‖L^off v‖² / N` | (7.7) lower-left, (6.3) | exact only with py2d |
-| `identity_gap` | `Tr(J) - Tr(A) - Tr(BD)` on paired probes | proxy identity | should be ~0 for a linear map |
-| `rho_S` | leading `‖λ‖` of `S` | Section 7.6 | optional `--spectral-radius` |
-| `roll_eps_u_norm`, `roll_eps_z_norm` | teacher-forced one-step residuals | (5.2) | exact |
-| `roll_e_norm` | `‖û_n - u_n‖` on a free rollout from `(u_0, D u_1)` | (5.1) | exact |
-| `roll_I`, `roll_R` | `I_n=‖∑ ε^u‖`, `R_n=‖e_n‖-I_n` | (10.2) and the deck | exact bookkeeping |
-| `roll_rho_norm` | `‖e_n - ∑ ε^u‖` | (10.4) | exact; not the same as `R_n` |
-| `roll_rH_norm`, `roll_rZ_norm` | first-factor channels | (10.4) with `dt H → J-I`, `dt F_z → B` | approximation |
-| `roll_recon_norm` | `‖ρ - r_H - r_z‖` | leftover past one factor | approximation |
-| `roll_cos_rH_rZ` | alignment of the two channels | Section 10 | so the norms are not added |
+`DB`, `D Phi'_n B`, and `D Phi'_{n+1} B` are different operators.
 
-`approximation` in `results.npz` is `proxy` or `exact`. Proxy means `D Φ' ≈ D`.
-Do not read proxy traces as the Section 7 operators.
+- `tr_A_*`, `tr_A_over_N`: Hutchinson trace of `A = dg/du`. Finite-difference estimate.
+- `tr_K_*`: trace of `K = dh/dz`. Finite-difference estimate.
+- `tr_DB_*`, `tr_DB_over_N`: coarse-probe trace of `D B`. This is the difference-quotient quantity behind `F_z D`.
+- `tr_DFz_over_N`: `Tr(DB) / (N dt)`. Difference-quotient label, including in py2d mode.
+- `tr_B_DPhi_n_*`: fine-probe trace of `B D Phi'_n`. In proxy mode `D Phi' ≈ D`, so this estimates `Tr(BD) = Tr(DB)`. In py2d mode it is the physical feedback trace and is not `Tr(DB)`.
+- `tr_DPhi_next_B_*`: coarse-probe trace of `D Phi'_{n+1} B`, used only inside `S`.
+- `composition_rel_*`: `||Jv - Av - B(w)|| / max(||Jv||, floor)` from three separate finite differences. Not `Jv - Av` reused as `B(w)`.
+- `trace_estimator_gap`: fine-probe mean of `v·B(w)` minus coarse-probe mean of `w·D(Bw)`, with `trace_estimator_gap_ci95`. In proxy mode both estimate `Tr(BD)`. This is sampling uncertainty, not the per-vector composition residual.
+- `tr_J_*`, `tr_J_over_N`: trace of `J = A + B D Phi'_n` (`D Phi' ≈ D` in proxy mode).
+- `tr_Fu_over_N`: `(Tr(A) - N) / (N dt)`. Its error bar is `tr_A_ci95 / (N dt)`.
+- `tr_Heff_over_N`: `(Tr(J) - N) / (N dt)`. Difference-quotient label.
+- `tr_S_*`, `tr_S_over_M`: trace of `S = K - D Phi'_{n+1} B`.
+- `tr_Sigma_over_M`: `(Tr(S) - M) / (M dt)`. Difference-quotient label.
+- `amp_J_*`: mean of `||Jv||^2 / N` over Rademacher probes. Mean-square directional amplification, not contraction in every direction.
+- `offgraph_probe_*`: `||L^off v||^2 / N`.
+- `fd_additivity_rel`: `||FD(v+w) - FD(v) - FD(w)|| / max(||FD(v+w)||, floor)` on the nonlinear map, recorded before Arnoldi. It does not by itself fail validation.
+- `rho_S`: leading magnitude of `S`. Optional `--spectral-radius`. Finite-difference matvec.
+- `roll_eps_u_norm`, `roll_eps_z_norm`: teacher-forced one-step residuals.
+- `roll_e_norm`, `roll_eta_norm`: free-rollout fine and latent errors from `(u_0, D u_1)`.
+- `roll_I`, `roll_R`: `I_n = ||sum_{i<n} eps_u||`, `R_n = ||e_n|| - I_n`.
+- `roll_rho_norm`: `||e_n - sum_{i<n} eps_u||`. Not the same as `R_n`.
+- `roll_rH_norm`, `roll_rZ_norm`: truncated first-factor channels. A large residual is not automatically a bug.
+- `roll_recon_norm`: `||rho - r_H - r_z||`.
+- `roll_cos_rH_rZ`: alignment. Undefined when either channel is zero; plotted on its own panel with limits `[-1, 1]`.
+- `roll_e_lin_norm`, `roll_eta_lin_norm`: full linearized errors. No physical tangent.
+- `roll_e_lin_err`, `roll_eta_lin_err`: `||e - e_lin||` and `||eta - eta_lin||`, vector differences.
+- `roll_recon_lin_norm`: `||rho_lin - r_H - r_z||`.
 
-## What still needs the solver
+`approximation` is `proxy` or `py2d_fd`. Neither label means the finite difference is an exact derivative. Proxy means `D Phi' ≈ D`.
 
-`J_phys`, `S`, `L^off`, and `ξ = ε^z - D Φ' ε^u` are the Section 7 quantities
-only with `--physical-jvp py2d`. That path is `Py2DFDTangent` in
-`eval/l2_physical_jvp.py` (AB2/CN, NoSGS, Re=1e4, fkx=fky=4, α=0.1, β=20,
-solver dt=1e-4, emulator dt=0.25). It imports jax lazily and raises if jax
-is missing. The `hine` env is not modified. Use
-`nersc_job_launchers/make_hine_jax_env.sh`.
+## Py2D
+
+`--physical-jvp py2d` builds the tangent with `Py2DInMemory` in
+`eval/py2d_inmem.py`, which imports kernels from `/global/homes/d/divyam/py2d`
+(`gridgen`, `initialize_wavenumbers_rfft2`, `Omega2Psi_spectral`,
+`Psi2UV_spectral`, `convection_conserved_dealias`). The step is the NoSGS
+AB2/CN update (Re=1e4, fkx=fky=4, alpha=0.1, beta=20, solver dt=1e-4).
+`Py2D_solver` itself is not called. Jax is imported only when that tangent
+is constructed. The `hine` env is not modified. Use
+`nersc_job_launchers/make_hine_jax_env.sh`. The grid size follows the field
+(256 for this L=2 checkpoint).
 
 ## L=3
 

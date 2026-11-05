@@ -4,9 +4,10 @@
 Matrix-free centered finite differences only. Does not retrain, does not
 edit weights, and does not treat HINE as an Euler integrator.
 
-Proxy mode (default) uses D Phi' ≈ D and labels every derived operator
-*_proxy / approximation=proxy. py2d mode uses a finite-difference physical
-tangent and requires the hine-jax env.
+Proxy mode (default) uses D Phi' ≈ D and labels results approximation=proxy.
+py2d mode uses a finite-difference physical tangent through the py2d
+checkout. That finite difference is not an exact tangent. It requires the
+hine-jax env.
 
 With --n-gpus N>1 the parent shards the N_snapshots windows across GPUs
 (round-robin) and merges shard_*.npz into results.npz + plots.
@@ -46,14 +47,17 @@ from eval_jacobian_manual_mse import load_kept_paths
 from eval_jacobian_manual_mse_plus import load_model
 from l2_fd_jvp import (
     DEFAULT_EPS_LIST,
+    FD_OUTPUT_FLOOR,
+    FD_SCALING,
+    apply_D,
     assert_l2,
-    eps_sweep,
     make_point,
     model_step,
+    validate_fd_eps,
 )
-from l2_operators import diagnose_point, flat_diag
+from l2_operators import _phi_image, diagnose_point, flat_diag, quotient_halfwidth
 from l2_physical_jvp import make_tangent
-from l2_retention import rollout_diagnostics
+from l2_retention import relative_residual, rollout_diagnostics
 
 
 DIAG_KEYS = [
@@ -62,11 +66,16 @@ DIAG_KEYS = [
     "tr_K_over_M",
     "tr_S_over_M",
     "tr_DB_over_N",
+    "tr_B_DPhi_n_over_N",
     "tr_Fu_over_N",
     "tr_DFz_over_N",
     "tr_Heff_over_N",
     "tr_Sigma_over_M",
-    "identity_gap",
+    "composition_rel_mean",
+    "composition_rel_max",
+    "trace_estimator_gap",
+    "trace_estimator_gap_ci95",
+    "fd_additivity_rel",
     "n_fine",
     "n_coarse",
     "tr_A_mean",
@@ -81,6 +90,10 @@ DIAG_KEYS = [
     "tr_DB_mean",
     "tr_DB_std",
     "tr_DB_ci95",
+    "tr_B_DPhi_n_mean",
+    "tr_B_DPhi_n_ci95",
+    "tr_DPhi_next_B_mean",
+    "tr_DPhi_next_B_ci95",
     "amp_J_mean",
     "amp_J_std",
     "amp_J_ci95",
@@ -104,6 +117,12 @@ ROLL_KEYS = (
     "cos_rH_rZ",
     "eps_u_norm",
     "eps_z_norm",
+    "e_lin_norm",
+    "eta_norm",
+    "eta_lin_norm",
+    "e_lin_err",
+    "eta_lin_err",
+    "recon_lin_norm",
 )
 
 
@@ -129,6 +148,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=list(DEFAULT_EPS_LIST),
     )
     p.add_argument("--fd-tol", type=float, default=1e-2)
+    p.add_argument(
+        "--allow-unvalidated-fd",
+        action="store_true",
+        help="Write results even when the selected fd-eps fails validation. Recorded in metadata.",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     p.add_argument("--physical-jvp", choices=["proxy", "py2d"], default="proxy")
@@ -221,29 +245,50 @@ def _errbar(ax, x, y, yerr, label):
     ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3, label=label)
 
 
-def write_plots(save_dir: Path, diag: dict, rolls: dict) -> None:
+def _merge_fd_reports(base: dict, extra: dict) -> dict:
+    if not extra.get("checks"):
+        return base
+    checks = list(base["checks"]) + list(extra["checks"])
+    out = dict(base)
+    out["checks"] = checks
+    out["ok"] = all(c["ok"] for c in checks)
+    out["n_checks"] = len(checks)
+    out["n_failed"] = sum(1 for c in checks if not c["ok"])
+    out["worst"] = max(checks, key=lambda c: c["rel"])
+    return out
+
+
+def _title(text: str, validated: bool) -> str:
+    return text if validated else f"UNVALIDATED {text}"
+
+
+def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True) -> None:
     plot_dir = save_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     idx = np.arange(diag["tr_Fu_over_N"].shape[0])
+    kind = str(np.asarray(diag["approximation"]).item())
+    dt = float(np.asarray(diag["dt"]))
+    fu_err = quotient_halfwidth(diag["tr_A_ci95"], diag["n_fine"], dt)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    _errbar(
-        ax,
-        idx,
-        diag["tr_Fu_over_N"],
-        diag["tr_A_ci95"] / diag["n_fine"],
-        r"Tr$(F_u)/N$",
-    )
+    _errbar(ax, idx, diag["tr_Fu_over_N"], fu_err, r"Tr$(F_u)/N$")
     _errbar(
         ax,
         idx,
         diag["tr_DFz_over_N"],
-        diag["tr_DB_ci95"] / (diag["n_fine"] * diag["dt"]),
-        r"Tr$(DF_z)/N$",
+        quotient_halfwidth(diag["tr_DB_ci95"], diag["n_fine"], dt),
+        r"Tr$(DB)/(N\,dt)$ proxy",
     )
-    ax.plot(idx, diag["tr_Heff_over_N"], "k--", label=r"sum $\widetilde H_{\mathrm{eff}}$")
+    ax.plot(idx, diag["tr_Heff_over_N"], "k--", label=r"$(Tr J - N)/(N dt)$")
+    _errbar(
+        ax,
+        idx,
+        diag["tr_J_over_N"],
+        diag["tr_J_ci95"] / diag["n_fine"],
+        r"Tr$(J)/N$",
+    )
     ax.set_xlabel("snapshot")
-    ax.set_title("Difference-quotient trace split (proxy)")
+    ax.set_title(_title(f"Direct-step and difference-quotient traces ({kind})", validated))
     ax.legend()
     fig.tight_layout()
     fig.savefig(plot_dir / "trace_split.png", dpi=140)
@@ -254,20 +299,33 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict) -> None:
         ax,
         idx,
         diag["tr_Sigma_over_M"],
-        diag["tr_S_ci95"] / (diag["n_coarse"] * diag["dt"]),
-        r"Tr$(\widetilde\Sigma)/M$",
+        quotient_halfwidth(diag["tr_S_ci95"], diag["n_coarse"], dt),
+        r"$(Tr S - M)/(M dt)$",
+    )
+    _errbar(
+        ax,
+        idx,
+        diag["tr_S_over_M"],
+        diag["tr_S_ci95"] / diag["n_coarse"],
+        r"Tr$(S)/M$",
     )
     ax.set_xlabel("snapshot")
-    ax.set_title("Parasitic trace, difference-quotient proxy")
+    ax.set_title(_title(f"Parasitic trace ({kind})", validated))
     ax.legend()
     fig.tight_layout()
     fig.savefig(plot_dir / "parasitic_trace.png", dpi=140)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    _errbar(ax, idx, diag["amp_J_mean"], diag["amp_J_ci95"], r"$\|J v\|^2/N$")
+    _errbar(
+        ax,
+        idx,
+        diag["amp_J_mean"],
+        diag["amp_J_ci95"],
+        r"mean $\|J v\|^2/N$",
+    )
     ax.set_xlabel("snapshot")
-    ax.set_title("Direct-step amplification")
+    ax.set_title(_title("Mean-square directional amplification", validated))
     ax.legend()
     fig.tight_layout()
     fig.savefig(plot_dir / "amplification.png", dpi=140)
@@ -279,7 +337,7 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict) -> None:
         ax.axhline(1.0, color="k", ls="--", lw=0.8)
         ax.set_xlabel("snapshot")
         ax.set_ylabel(r"$\rho(S)$")
-        ax.set_title("Parasitic spectral radius")
+        ax.set_title(_title(f"Parasitic spectral radius ({kind})", validated))
         fig.tight_layout()
         fig.savefig(plot_dir / "rho_S.png", dpi=140)
         plt.close(fig)
@@ -293,7 +351,7 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict) -> None:
         r"$\|L^{\mathrm{off}} v\|^2/N$",
     )
     ax.set_xlabel("snapshot")
-    ax.set_title("Off-graph coupling probe norm")
+    ax.set_title(_title(f"Off-graph coupling probe norm ({kind})", validated))
     ax.legend()
     fig.tight_layout()
     fig.savefig(plot_dir / "offgraph_norm.png", dpi=140)
@@ -305,33 +363,67 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict) -> None:
     ax.plot(lead, rolls["R"].mean(0), label=r"$R_n=\|e_n\|-I_n$")
     ax.set_xlabel("step")
     ax.legend()
-    ax.set_title("Injection and scalar retention")
+    ax.set_title(_title("Injection and scalar retention", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "injection_retention.png", dpi=140)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|\tilde r_H\|$")
-    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|\tilde r_z\|$")
-    ax.plot(lead, rolls["cos_rH_rZ"].mean(0), label=r"$\cos(r_H,r_z)$")
+    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|\tilde r_H\|$ truncated")
+    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|\tilde r_z\|$ truncated")
     ax.set_xlabel("step")
     ax.legend()
-    ax.set_title("First-factor retention channels")
+    ax.set_title(_title("Truncated first-factor channels", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "retention_channels.png", dpi=140)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(
-        lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-\tilde r_H-\tilde r_z\|$"
-    )
-    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
+    ax.plot(lead, np.nanmean(rolls["cos_rH_rZ"], axis=0), label=r"$\cos(r_H,r_z)$")
+    ax.set_ylim(-1.0, 1.0)
     ax.set_xlabel("step")
     ax.legend()
-    ax.set_title("First-factor reconstruction residual")
+    ax.set_title(_title("Channel alignment; undefined cosines are gaps", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "retention_alignment.png", dpi=140)
+    plt.close(fig)
+
+    rel = relative_residual(rolls["recon_norm"], rolls["rho_norm"], FD_OUTPUT_FLOOR)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-\tilde r_H-\tilde r_z\|$")
+    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
+    ax.plot(lead, np.nanmean(rel, axis=0), label="mean of per-window ratios")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title("Truncated first-factor residual", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "reconstruction_residual.png", dpi=140)
     plt.close(fig)
+
+    if "e_lin_norm" in rolls:
+        fig, axes = plt.subplots(2, 2, figsize=(8, 6))
+        axes[0, 0].plot(lead, rolls["e_norm"].mean(0), label="actual")
+        axes[0, 0].plot(lead, rolls["e_lin_norm"].mean(0), label="linearized")
+        axes[0, 0].set_title(r"fine $\|e\|$")
+        axes[0, 0].legend()
+        axes[0, 1].plot(lead, rolls["eta_norm"].mean(0), label="actual")
+        axes[0, 1].plot(lead, rolls["eta_lin_norm"].mean(0), label="linearized")
+        axes[0, 1].set_title(r"latent $\|\eta\|$")
+        axes[0, 1].legend()
+        axes[1, 0].plot(lead, rolls["e_lin_err"].mean(0), label=r"$\|e-e_{lin}\|$")
+        axes[1, 0].plot(lead, rolls["eta_lin_err"].mean(0), label=r"$\|\eta-\eta_{lin}\|$")
+        axes[1, 0].set_title("vector linearization error")
+        axes[1, 0].legend()
+        axes[1, 1].plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-r_H-r_z\|$")
+        axes[1, 1].plot(lead, rolls["recon_lin_norm"].mean(0), label=r"$\|\rho_{lin}-r_H-r_z\|$")
+        axes[1, 1].set_title("truncation versus linearization")
+        axes[1, 1].legend()
+        for ax in axes.ravel():
+            ax.set_xlabel("step")
+        fig.suptitle(_title("Full linearized error versus free rollout", validated))
+        fig.tight_layout()
+        fig.savefig(plot_dir / "linearized_error.png", dpi=140)
+        plt.close(fig)
 
 
 def _stack_results(
@@ -385,16 +477,30 @@ def run_windows(
     ds = int(model.ds_factors[0])
 
     first_frames, _ = _load_window_from_entry(window_entries[0])
-    first = make_point(first_frames[:3], model, device, dtype, args.norm)
-    step0 = lambda u, z, _t=first.t: model_step(ema_vit, u, z, _t)
-    sweep = eps_sweep(step0, first, args.fd_eps_list, args.fd_tol)
-    if not sweep["ok"]:
-        failed.append(
-            "fd eps sweep: no consecutive eps pair within "
-            f"tol={args.fd_tol}; rels={sweep['consecutive_rel']}"
+    named_points = [("step0", make_point(first_frames[:3], model, device, dtype, args.norm))]
+    later_k = args.rollout_length - 1
+    if later_k > 0 and len(first_frames) >= later_k + 3:
+        named_points.append(
+            (f"step{later_k}", make_point(first_frames[later_k : later_k + 3], model, device, dtype, args.norm))
         )
+    first = named_points[0][1]
+    step0 = lambda u, z, _t=first.t: model_step(ema_vit, u, z, _t)
+
+    def graph_w(point, vec, _tangent=tangent, _ds=ds, _norm=args.norm):
+        return apply_D(_phi_image(_tangent, point.u, vec, _norm), _ds)
+
+    sweep = validate_fd_eps(
+        step0,
+        named_points,
+        args.fd_eps,
+        args.fd_tol,
+        args.seed,
+        ds,
+        graph_w=graph_w,
+    )
     print(
-        f"[fd] eps sweep ok={sweep['ok']} rels={sweep['consecutive_rel']}",
+        f"[fd] working eps={args.fd_eps} ok={sweep['ok']} "
+        f"failed={sweep['n_failed']}/{sweep['n_checks']}",
         flush=True,
     )
 
@@ -432,6 +538,7 @@ def run_windows(
             flush=True,
         )
         print(f"[roll {gidx}] length={args.rollout_length}", flush=True)
+        sink: list | None = [] if local_i == 0 else None
         roll = rollout_diagnostics(
             ema_vit,
             frames,
@@ -442,8 +549,29 @@ def run_windows(
             args.fd_eps,
             tangent,
             args.rollout_length,
+            direction_sink=sink,
         )
+        if sink:
+            extra = validate_fd_eps(
+                step0, [], args.fd_eps, args.fd_tol, args.seed, ds,
+                graph_w=graph_w, extra_directions=sink,
+            )
+            sweep = _merge_fd_reports(sweep, extra)
+            print(
+                f"[fd] with retention directions ok={sweep['ok']} "
+                f"failed={sweep['n_failed']}/{sweep['n_checks']}",
+                flush=True,
+            )
         rolls.append(roll)
+
+    if not sweep["ok"]:
+        worst = sweep.get("worst") or {}
+        failed.append(
+            "fd validation failed for the selected eps "
+            f"{args.fd_eps}: {sweep['n_failed']}/{sweep['n_checks']} checks, "
+            f"worst {worst.get('name')}/{worst.get('block')} "
+            f"rel={worst.get('rel')}"
+        )
 
     after = _hash_module(ema_vit)
     if after != weight_hash:
@@ -452,11 +580,16 @@ def run_windows(
     extras = {
         "weight_sha256": weight_hash,
         "weights_unchanged": after == weight_hash,
+        "fd_validated": bool(sweep["ok"]),
+        "fd_scaling": FD_SCALING,
         "fd_sweep": sweep,
+        "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
         "failed_tests": failed,
         "downsampling": f"avg_pool2d kernel=stride={ds}",
         "physical_jvp": tangent.name,
-        "is_exact_physical_jvp": bool(tangent.is_exact),
+        "is_exact_physical_jvp": False,
+        "py2d_root": getattr(tangent, "py2d_root", None),
+        "physical_jvp_note": "finite-difference estimates are not exact tangents",
         "num_coarse": int(model.num_coarse),
         "latent_res": list(model.latent_res),
         "global_indices": [int(g) for g in global_indices],
@@ -547,7 +680,8 @@ def write_final(
         **diag_np,
         **{f"roll_{k}": v for k, v in roll_np.items()},
     )
-    write_plots(save_dir, diag_np, roll_np)
+    validated = all(bool(m.get("fd_validated", False)) for m in metas)
+    write_plots(save_dir, diag_np, roll_np, validated=validated)
 
     failed: list[str] = []
     for m in metas:
@@ -568,13 +702,26 @@ def write_final(
         "dt_meaning": "one emulator step; default 0.25 = five 0.05 snapshots",
         "downsampling": primary["downsampling"],
         "physical_jvp": primary["physical_jvp"],
-        "is_exact_physical_jvp": primary["is_exact_physical_jvp"],
+        "is_exact_physical_jvp": False,
+        "py2d_root": primary.get("py2d_root"),
+        "physical_jvp_note": primary.get("physical_jvp_note"),
         "difference_quotient": (
-            "F=(g-u)/dt and E=(h-z)/dt are labels only; the network is direct-step"
+            "F=(g-u)/dt and Tr(DB)/(N dt) are labels only; the network is direct-step. "
+            "tr_B_DPhi_n is the physical feedback trace and is not Tr(DB)."
         ),
-        "first_factor": "r_H and r_z are one-Jacobian-factor approximations of rho",
+        "first_factor": (
+            "r_H and r_z are a truncated one-factor approximation. "
+            "A large reconstruction residual is not automatically an implementation bug."
+        ),
+        "amplification": (
+            "amp_J is the mean of ||Jv||^2/N over Rademacher probes. "
+            "It is mean-square directional amplification, not contraction in every direction."
+        ),
         "seed": args.seed,
         "fd_eps": args.fd_eps,
+        "fd_validated": validated,
+        "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
+        "fd_scaling": primary.get("fd_scaling"),
         "fd_sweep": primary.get("fd_sweep"),
         "n_probes": args.n_probes,
         "n_snapshots": args.n_snapshots,
@@ -595,10 +742,15 @@ def write_final(
         "latent_res": primary["latent_res"],
     }
     (save_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"[done] save_dir={save_dir} failed={len(failed)}", flush=True)
+    print(
+        f"[done] save_dir={save_dir} failed={len(failed)} fd_validated={validated}",
+        flush=True,
+    )
     if failed:
         for item in failed:
             print(f"  FAIL {item}", flush=True)
+    if not validated and not args.allow_unvalidated_fd:
+        raise SystemExit(2)
 
 
 def run_single(args: argparse.Namespace) -> None:
@@ -725,6 +877,8 @@ def _common_worker_cmd(args: argparse.Namespace, script: str, rank: int) -> list
     cmd.extend(str(eps) for eps in args.fd_eps_list)
     if args.spectral_radius:
         cmd.append("--spectral-radius")
+    if args.allow_unvalidated_fd:
+        cmd.append("--allow-unvalidated-fd")
     return cmd
 
 
