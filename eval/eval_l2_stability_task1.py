@@ -24,8 +24,23 @@ import sys
 import threading
 from pathlib import Path
 
+def _parent_hides_gpus(argv: list[str]) -> bool:
+    """Multi-GPU parent must not bind devices. A 1-GPU run keeps them visible."""
+    if "--worker" in argv:
+        return False
+    if "--n-gpus" not in argv:
+        return False
+    idx = argv.index("--n-gpus")
+    if idx + 1 >= len(argv):
+        return False
+    try:
+        return int(argv[idx + 1]) > 1
+    except ValueError:
+        return False
+
+
 # Parent orchestrator must not bind GPUs; workers set CUDA_VISIBLE_DEVICES.
-if "--worker" not in sys.argv:
+if _parent_hides_gpus(sys.argv):
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import matplotlib
@@ -262,6 +277,20 @@ def _title(text: str, validated: bool) -> str:
     return text if validated else f"UNVALIDATED {text}"
 
 
+def _defined_mean(values: np.ndarray) -> np.ndarray:
+    """Mean across windows. A step that is undefined in every window stays NaN."""
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    out = np.full(arr.shape[1], np.nan, dtype=np.float64)
+    for j in range(arr.shape[1]):
+        col = arr[:, j]
+        good = col[np.isfinite(col)]
+        if good.size:
+            out[j] = float(good.mean())
+    return out
+
+
 def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True) -> None:
     plot_dir = save_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -379,7 +408,7 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, np.nanmean(rolls["cos_rH_rZ"], axis=0), label=r"$\cos(r_H,r_z)$")
+    ax.plot(lead, _defined_mean(rolls["cos_rH_rZ"]), label=r"$\cos(r_H,r_z)$")
     ax.set_ylim(-1.0, 1.0)
     ax.set_xlabel("step")
     ax.legend()
@@ -392,7 +421,7 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-\tilde r_H-\tilde r_z\|$")
     ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
-    ax.plot(lead, np.nanmean(rel, axis=0), label="mean of per-window ratios")
+    ax.plot(lead, _defined_mean(rel), label="mean of per-window ratios")
     ax.set_xlabel("step")
     ax.legend()
     ax.set_title(_title("Truncated first-factor residual", validated))

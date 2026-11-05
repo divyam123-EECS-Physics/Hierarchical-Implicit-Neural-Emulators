@@ -315,13 +315,12 @@ def test_augmented_linearization_matches_dense_affine():
         g, h = lin.step(u, z)
         return g + bu.reshape_as(u).to(dtype=u.dtype), h + bz.reshape_as(z).to(dtype=z.dtype)
 
-    points = []
-    for _ in range(4):
-        u = torch.randn(1, 1, 4, 4, generator=gen, dtype=torch.float64)
-        z = torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64)
-        u_next = torch.randn(1, 1, 4, 4, generator=gen, dtype=torch.float64)
-        z_next = torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64)
-        points.append(L2Point(u, z, torch.ones(1, dtype=torch.float64), u_next, z_next, (0, 1, 2)))
+    us = [torch.randn(1, 1, 4, 4, generator=gen, dtype=torch.float64) for _ in range(5)]
+    zs = [torch.randn(1, 1, 2, 2, generator=gen, dtype=torch.float64) for _ in range(5)]
+    points = [
+        L2Point(us[n], zs[n], torch.ones(1, dtype=torch.float64), us[n + 1], zs[n + 1], (n, n + 1, n + 2))
+        for n in range(4)
+    ]
     eps_u, eps_z = [], []
     for pt in points:
         g, h = step(pt.u, pt.z)
