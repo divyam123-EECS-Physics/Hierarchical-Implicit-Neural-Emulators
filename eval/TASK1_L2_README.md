@@ -17,9 +17,16 @@ of the fine and latent relative perturbations equal `--fd-eps`. Each block is
 scaled by `max(||block||, 1e-8 * sqrt(numel))`. A zero direction returns zeros.
 The selected `--fd-eps` is compared with `eps/3` and `eps/10` on fine-only,
 latent-only, and graph directions, and on `g` and `h` separately. Random
-directions use `--seed`. Failure sets `fd_validated=false`, prefixes plot
-titles with `UNVALIDATED`, and exits 2. `--allow-unvalidated-fd` still writes
-files and is recorded in `metadata.json`.
+directions use `--seed`. That sweep is not sufficient. `model_fd_validated`
+also requires `composition_rel_max` and full-map `fd_additivity_rel` to be
+within `--fd-tol`, and the mixed retention and linearized directions at an
+early, middle, and late step. If the initial epsilon check fails and
+`--allow-unvalidated-fd` is absent, the run writes metadata and exits 2
+before the diagnostic windows. `--spectral-radius` runs Arnoldi only after
+`S` itself passes the same tolerance; `spectral_validated` stays false
+otherwise. `--physical-jvp py2d` records a separate
+`physical_tangent_validated` from the Task 1 frames at their own `nx` and
+`--dt`. Proxy mode stores `not_applicable` there, not true.
 
 ## Metric → equation
 
@@ -40,8 +47,9 @@ files and is recorded in `metadata.json`.
 - `tr_Sigma_over_M`: `(Tr(S) - M) / (M dt)`. Difference-quotient label.
 - `amp_J_*`: mean of `||Jv||^2 / N` over Rademacher probes. Mean-square directional amplification, not contraction in every direction.
 - `offgraph_probe_*`: `||L^off v||^2 / N`.
-- `fd_additivity_rel`: `||FD(v+w) - FD(v) - FD(w)|| / max(||FD(v+w)||, floor)` on the nonlinear map, recorded before Arnoldi. It does not by itself fail validation.
-- `rho_S`: leading magnitude of `S`. Optional `--spectral-radius`. Finite-difference matvec.
+- `fd_additivity_rel`: `||FD(v+w) - FD(v) - FD(w)|| / max(||FD(v+w)||, floor)` on the full network. Above `--fd-tol` it fails `model_fd_validated`.
+- `s_additivity_rel`: the same residual for the `S` matvec used by Arnoldi. Above `--fd-tol`, Arnoldi is not run and `spectral_validated` is false.
+- `rho_S`: leading magnitude of `S`, only after `S` additivity passes. Optional `--spectral-radius`.
 - `roll_eps_u_norm`, `roll_eps_z_norm`: teacher-forced one-step residuals.
 - `roll_e_norm`, `roll_eta_norm`: free-rollout fine and latent errors from `(u_0, D u_1)`.
 - `roll_I`, `roll_R`: `I_n = ||sum_{i<n} eps_u||`, `R_n = ||e_n|| - I_n`.

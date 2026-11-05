@@ -25,15 +25,16 @@ from l2_fd_jvp import (
     apply_K,
     assert_l2,
     block_step,
+    fd_additivity,
     fd_both_uz,
     fd_both_z,
     fd_pair,
     validate_fd_eps,
 )
 from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS
-from l2_operators import diagnose_point, flat_diag, quotient_halfwidth, rho_S
-from l2_physical_jvp import ProxyTangent, Py2DFDTangent
-from l2_retention import propagate_augmented, relative_residual, running_channels
+from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth, rho_S
+from l2_physical_jvp import ProxyTangent, Py2DFDTangent, validate_physical_reference
+from l2_retention import propagate_augmented, relative_residual, running_channels, validation_directions
 from main_plus import finalize_args
 from model_plus import FutureINNPlus
 import argparse
@@ -265,7 +266,9 @@ def test_independent_composition_not_tautology():
     pt = _point(gen)
     ds = 2
     v = torch.randn_like(pt.u)
-    w = apply_D(v, ds)
+    # A large latent direction changes the shared step h, so the mixed
+    # finite difference is not the fine-only difference plus B(w).
+    w = torch.ones_like(pt.z) * 20.0
     Jv, _ = fd_both_uz(step, pt, v, w, 0.4)
     Av = apply_A(step, pt, v, 0.4)
     Bw = apply_B(step, pt, w, 0.4)
@@ -393,6 +396,113 @@ def test_labels_and_l2_model():
         pass
 
 
+def test_composition_gate_is_not_the_epsilon_sweep():
+    assert gates_pass(True, 0.0, 0.0, 1e-2)
+    assert not gates_pass(True, 0.2, 0.0, 1e-2)
+    lin = LinearL2()
+    pt = _point(torch.Generator().manual_seed(2))
+    sweep = validate_fd_eps(lin.step, [("step0", pt)], 1e-2, tol=1e-6, seed=2, ds=2)
+    assert sweep["ok"]
+
+    def cubic(u, z):
+        z_up = z.repeat_interleave(2, dim=-1).repeat_interleave(2, dim=-2)
+        return u + 0.8 * (u ** 2) * z_up, z
+
+    gen = torch.Generator().manual_seed(21)
+    cpt = _point(gen)
+    diag = diagnose_point(
+        cubic, cpt, 2, 0.5, ProxyTangent(), dt=0.25, norm=1.0,
+        n_probes=4, seed=21, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
+    )
+    assert diag["composition_rel_max"] > 1e-2
+    assert not gates_pass(True, diag["composition_rel_max"], 0.0, 1e-2)
+
+
+class _CubicTangent:
+    name = "py2d_fd"
+    is_exact = False
+
+    def apply(self, u_phys, v_phys, eps_rel=None):
+        v = np.asarray(v_phys, dtype=np.float64)
+        return v + 0.5 * v ** 3
+
+
+def test_s_additivity_gates_arnoldi():
+    lin = LinearL2(seed=4)
+    pt = _point(torch.Generator().manual_seed(5))
+    full = fd_additivity(lin.step, pt, 1e-3, seed=4)
+    assert full["rel"] < 1e-6
+    assert gates_pass(True, 0.0, full["rel"], 1e-4)
+    est = rho_S(
+        lin.step, pt, 2, 1e-3, _CubicTangent(), 1.0,
+        ncv=3, maxiter=40, tol=1e-8, seed=0, fd_tol=1e-6,
+    )
+    assert est["spectral_validated"] is False
+    assert "Arnoldi skipped" in est["error"]
+    assert est["converged"] is False
+
+
+def test_retention_direction_is_mixed():
+    eu = [torch.ones(1, 1, 4, 4), torch.ones(1, 1, 4, 4), torch.full((1, 1, 4, 4), 2.0)]
+    xi = [torch.ones(1, 1, 2, 2) for _ in range(3)]
+    e_lin = [torch.zeros(1, 1, 4, 4)] + [torch.full((1, 1, 4, 4), float(k)) for k in range(1, 4)]
+    eta_lin = [torch.zeros(1, 1, 2, 2)] + [torch.ones(1, 1, 2, 2) for _ in range(3)]
+    points = []
+    for n in range(3):
+        points.append(L2Point(
+            torch.ones(1, 1, 4, 4),
+            torch.ones(1, 1, 2, 2),
+            torch.ones(1),
+            torch.ones(1, 1, 4, 4),
+            torch.ones(1, 1, 2, 2),
+            (n, n + 1, n + 2),
+        ))
+    found = validation_directions(points, eu, xi, e_lin, eta_lin, ProxyTangent(), 2, 1.0)
+    rh = next(item for item in found if item["name"] == "rH_step1")
+    assert torch.allclose(rh["du"], eu[0])
+    assert torch.allclose(rh["dz"], apply_D(eu[0], 2))
+    assert float(rh["dz"].abs().sum()) > 0.0
+    assert any(item["name"].startswith("lin_step") for item in found)
+
+
+def test_phi_image_keeps_float64():
+    seen = {}
+
+    class _Rec:
+        name = "py2d_fd"
+        is_exact = False
+
+        def apply(self, u_phys, v_phys, eps_rel=None):
+            seen["u"] = np.asarray(u_phys).dtype
+            seen["v"] = np.asarray(v_phys).dtype
+            return np.asarray(v_phys, dtype=np.float64)
+
+    u = torch.ones(1, 1, 2, 2, dtype=torch.float64)
+    v = torch.full((1, 1, 2, 2), 0.25, dtype=torch.float64)
+    out = _phi_image(_Rec(), u, v, 10.0)
+    assert seen["u"] == np.float64 and seen["v"] == np.float64
+    assert out.dtype == torch.float64
+    assert torch.allclose(out, v)
+
+
+def test_physical_reference_uses_the_supplied_frames():
+    class _Id:
+        def flow(self, u):
+            return np.array(u, dtype=np.float64, copy=True)
+
+        def apply(self, u, v, eps_rel=None):
+            return np.array(v, dtype=np.float64, copy=True)
+
+    field = np.ones((8, 8))
+    good = validate_physical_reference(_Id(), field, field, 1e-3, 1e-6, 0, 0.25, [11, 12])
+    assert good["ok"]
+    assert good["nx"] == 8 and good["dt"] == 0.25
+    assert good["stems"] == [11, 12] and good["source"] == "task1_window"
+    bad = validate_physical_reference(_Id(), field, 2.0 * field, 1e-3, 1e-6, 0, 0.25, [13, 14])
+    assert not bad["ok"]
+    assert bad["stems"] == [13, 14]
+
+
 if __name__ == "__main__":
     test_fd_matches_dense_and_is_linear()
     test_eps_sweep_exact_on_linear()
@@ -406,4 +516,9 @@ if __name__ == "__main__":
     test_rho_S_matches_dense()
     test_retention_bookkeeping()
     test_labels_and_l2_model()
+    test_composition_gate_is_not_the_epsilon_sweep()
+    test_s_additivity_gates_arnoldi()
+    test_retention_direction_is_mixed()
+    test_phi_image_keeps_float64()
+    test_physical_reference_uses_the_supplied_frames()
     print("ok")

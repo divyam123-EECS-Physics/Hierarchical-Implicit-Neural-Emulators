@@ -152,6 +152,7 @@ class Py2DInMemory:
         from py2d.convection_conserved import convection_conserved_dealias
         from py2d.convert import Omega2Psi_spectral, Psi2UV_spectral
         from py2d.initialize import gridgen, initialize_wavenumbers_rfft2
+        from py2d.nosgs_step import nosgs_microstep
 
         jax.config.update("jax_enable_x64", True)
         self.jax = jax
@@ -159,6 +160,7 @@ class Py2DInMemory:
         self._conv = convection_conserved_dealias
         self._psi = Omega2Psi_spectral
         self._uv = Psi2UV_spectral
+        self._micro = nosgs_microstep
 
         nx = int(self.cfg.nx)
         lx = 2.0 * np.pi
@@ -179,25 +181,21 @@ class Py2DInMemory:
         self._step_jit = jax.jit(self._step_pure)
 
     def _step_pure(self, state):
-        """One AB2/CN microstep. Mirrors Py2D_solver.py lines 244-313 with NoSGS."""
-        jnp = self.jnp
-        o0, o1, c0 = state
-        psi1 = self._psi(o1, self.invKsq)
-        _u1, v1 = self._uv(psi1, self.Kx, self.Ky)
-        c1 = self._conv(o1, _u1, v1, self.Kx, self.Ky)
-        conv = 1.5 * c1 - 0.5 * c0
-        diffu = -self.Ksq * o1
-        dt = float(self.cfg.dt_dns)
-        rhs = (
-            o1
-            - dt * conv
-            + dt * 0.5 * self.nu * diffu
-            - dt * self.Fk
-            + dt * float(self.cfg.beta) * v1
+        """One NoSGS AB2/CN microstep from py2d.nosgs_step."""
+        _o0, o1, c0 = state
+        return self._micro(
+            o1,
+            c0,
+            self.Kx,
+            self.Ky,
+            self.Ksq,
+            self.invKsq,
+            self.Fk,
+            self.nu,
+            float(self.cfg.dt_dns),
+            float(self.cfg.alpha),
+            float(self.cfg.beta),
         )
-        denom = 1.0 + dt * float(self.cfg.alpha) + 0.5 * dt * self.nu * self.Ksq
-        o_new = rhs / denom
-        return o1, o_new, c1
 
     def _hat(self, omega_phys: np.ndarray):
         field = np.asarray(omega_phys, dtype=np.float64)

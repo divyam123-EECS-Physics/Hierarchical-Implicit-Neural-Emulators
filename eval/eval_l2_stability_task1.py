@@ -70,8 +70,8 @@ from l2_fd_jvp import (
     model_step,
     validate_fd_eps,
 )
-from l2_operators import _phi_image, diagnose_point, flat_diag, quotient_halfwidth
-from l2_physical_jvp import make_tangent
+from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth
+from l2_physical_jvp import make_tangent, validate_physical_reference
 from l2_retention import relative_residual, rollout_diagnostics
 
 
@@ -91,6 +91,7 @@ DIAG_KEYS = [
     "trace_estimator_gap",
     "trace_estimator_gap_ci95",
     "fd_additivity_rel",
+    "s_additivity_rel",
     "n_fine",
     "n_coarse",
     "tr_A_mean",
@@ -256,7 +257,73 @@ def write_sample_index(
     return samples
 
 
+class DiagnosticsAborted(RuntimeError):
+    """Initial epsilon check failed and the override is off."""
+
+    def __init__(self, extras: dict):
+        super().__init__("fd validation failed before diagnostics")
+        self.extras = extras
+
+
 def _errbar(ax, x, y, yerr, label):
+    ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3, label=label)
+
+
+def _run_extras(
+    args,
+    tangent,
+    ds,
+    weight_before,
+    weight_after,
+    sweep,
+    failed,
+    window_entries,
+    global_indices,
+    *,
+    model_fd_validated,
+    physical_tangent_validated,
+    spectral_validated,
+    fd_validated,
+    physical_flow,
+    aborted_before_diagnostics,
+    num_coarse,
+    latent_res,
+) -> dict:
+    return {
+        "weight_sha256": weight_before,
+        "weights_unchanged": weight_after == weight_before,
+        "model_fd_validated": bool(model_fd_validated),
+        "physical_tangent_validated": physical_tangent_validated,
+        "spectral_validated": spectral_validated,
+        "fd_validated": bool(fd_validated),
+        "fd_scaling": FD_SCALING,
+        "fd_sweep": sweep,
+        "physical_flow": physical_flow,
+        "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
+        "aborted_before_diagnostics": bool(aborted_before_diagnostics),
+        "failed_tests": failed,
+        "downsampling": f"avg_pool2d kernel=stride={ds}",
+        "physical_jvp": tangent.name,
+        "is_exact_physical_jvp": False,
+        "py2d_root": getattr(tangent, "py2d_root", None),
+        "physical_jvp_note": "finite-difference estimates are not exact tangents",
+        "num_coarse": num_coarse,
+        "latent_res": latent_res,
+        "global_indices": [int(g) for g in global_indices],
+        "windows": [
+            {"start": e["start_index"], "stems": e["stems"]} for e in window_entries
+        ],
+    }
+
+
+def _status_all(values: list):
+    if not values:
+        return False
+    labels = {"not_applicable", "not_requested", "not_checked"}
+    if all(v in labels for v in values) and len(set(values)) == 1:
+        return values[0]
+    bools = [v for v in values if isinstance(v, bool)]
+    return all(bools) if bools else False
     ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3, label=label)
 
 
@@ -421,12 +488,21 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-\tilde r_H-\tilde r_z\|$")
     ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
-    ax.plot(lead, _defined_mean(rel), label="mean of per-window ratios")
     ax.set_xlabel("step")
     ax.legend()
     ax.set_title(_title("Truncated first-factor residual", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "reconstruction_residual.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(lead, _defined_mean(rel), label="mean of per-window ratios")
+    ax.set_xlabel("step")
+    ax.set_ylabel(r"$\|\rho-r_H-r_z\| / \max(\|\rho\|, floor)$")
+    ax.legend()
+    ax.set_title(_title("Per-window relative reconstruction residual", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "relative_reconstruction.png", dpi=140)
     plt.close(fig)
 
     if "e_lin_norm" in rolls:
@@ -532,6 +608,48 @@ def run_windows(
         f"failed={sweep['n_failed']}/{sweep['n_checks']}",
         flush=True,
     )
+    if not sweep["ok"] and not args.allow_unvalidated_fd:
+        worst = sweep.get("worst") or {}
+        failed.append(
+            "fd validation failed for the selected eps "
+            f"{args.fd_eps}: {sweep['n_failed']}/{sweep['n_checks']} checks, "
+            f"worst {worst.get('name')}/{worst.get('block')} "
+            f"rel={worst.get('rel')}"
+        )
+        raise DiagnosticsAborted(
+            _run_extras(
+                args, tangent, ds, weight_hash, weight_hash, sweep, failed,
+                window_entries, global_indices,
+                model_fd_validated=False,
+                physical_tangent_validated="not_checked",
+                spectral_validated="not_requested" if not args.spectral_radius else False,
+                fd_validated=False,
+                physical_flow=None,
+                aborted_before_diagnostics=True,
+                num_coarse=int(model.num_coarse),
+                latent_res=list(model.latent_res),
+            )
+        )
+
+    physical_flow = None
+    if args.physical_jvp == "py2d":
+        stems0 = window_entries[0]["stems"]
+        physical_flow = validate_physical_reference(
+            tangent,
+            first_frames[0],
+            first_frames[1],
+            args.fd_eps,
+            args.fd_tol,
+            args.seed,
+            args.dt,
+            stems0[:2],
+        )
+        print(
+            f"[physical] flow_rel={physical_flow['flow_rel']:.4e} "
+            f"nx={physical_flow['nx']} dt={physical_flow['dt']} "
+            f"ok={physical_flow['ok']}",
+            flush=True,
+        )
 
     diags: list[dict] = []
     rolls: list[dict] = []
@@ -558,6 +676,7 @@ def run_windows(
             args.ncv,
             args.maxiter,
             args.tol,
+            fd_tol=args.fd_tol,
         )
         diags.append(diag)
         print(
@@ -601,31 +720,55 @@ def run_windows(
             f"worst {worst.get('name')}/{worst.get('block')} "
             f"rel={worst.get('rel')}"
         )
+    comp_vals = [float(d["composition_rel_max"]) for d in diags]
+    add_vals = [float(d["fd_additivity_rel"]) for d in diags]
+    comp_ok = bool(comp_vals) and max(comp_vals) <= float(args.fd_tol)
+    add_ok = bool(add_vals) and max(add_vals) <= float(args.fd_tol)
+    if not comp_ok:
+        failed.append(
+            f"composition_rel_max {max(comp_vals) if comp_vals else 'nan'} exceeds fd_tol {args.fd_tol}"
+        )
+    if not add_ok:
+        failed.append(
+            f"fd_additivity_rel {max(add_vals) if add_vals else 'nan'} exceeds fd_tol {args.fd_tol}"
+        )
+    model_ok = gates_pass(
+        sweep["ok"],
+        max(comp_vals) if comp_vals else float("inf"),
+        max(add_vals) if add_vals else float("inf"),
+        args.fd_tol,
+    )
+    if args.physical_jvp == "py2d":
+        physical_status = bool(physical_flow and physical_flow["ok"])
+        if not physical_status:
+            failed.append("physical tangent flow or finite-difference check failed")
+        physical_ok = physical_status
+    else:
+        physical_status = "not_applicable"
+        physical_ok = True
+    if not args.spectral_radius:
+        spectral_status = "not_requested"
+    else:
+        spectral_status = bool(diags) and all(d.get("spectral_validated") is True for d in diags)
+        if not spectral_status:
+            failed.append("S additivity did not certify the spectral calculation")
 
     after = _hash_module(ema_vit)
     if after != weight_hash:
         failed.append("checkpoint weights changed during the diagnostic")
 
-    extras = {
-        "weight_sha256": weight_hash,
-        "weights_unchanged": after == weight_hash,
-        "fd_validated": bool(sweep["ok"]),
-        "fd_scaling": FD_SCALING,
-        "fd_sweep": sweep,
-        "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
-        "failed_tests": failed,
-        "downsampling": f"avg_pool2d kernel=stride={ds}",
-        "physical_jvp": tangent.name,
-        "is_exact_physical_jvp": False,
-        "py2d_root": getattr(tangent, "py2d_root", None),
-        "physical_jvp_note": "finite-difference estimates are not exact tangents",
-        "num_coarse": int(model.num_coarse),
-        "latent_res": list(model.latent_res),
-        "global_indices": [int(g) for g in global_indices],
-        "windows": [
-            {"start": e["start_index"], "stems": e["stems"]} for e in window_entries
-        ],
-    }
+    extras = _run_extras(
+        args, tangent, ds, weight_hash, after, sweep, failed,
+        window_entries, global_indices,
+        model_fd_validated=model_ok,
+        physical_tangent_validated=physical_status,
+        spectral_validated=spectral_status,
+        fd_validated=bool(model_ok and physical_ok),
+        physical_flow=physical_flow,
+        aborted_before_diagnostics=False,
+        num_coarse=int(model.num_coarse),
+        latent_res=list(model.latent_res),
+    )
     return diags, rolls, extras
 
 
@@ -749,6 +892,15 @@ def write_final(
         "seed": args.seed,
         "fd_eps": args.fd_eps,
         "fd_validated": validated,
+        "model_fd_validated": _status_all([m.get("model_fd_validated", False) for m in metas]),
+        "physical_tangent_validated": _status_all(
+            [m.get("physical_tangent_validated", "not_applicable") for m in metas]
+        ),
+        "spectral_validated": _status_all(
+            [m.get("spectral_validated", "not_requested") for m in metas]
+        ),
+        "physical_flow": primary.get("physical_flow"),
+        "aborted_before_diagnostics": any(m.get("aborted_before_diagnostics") for m in metas),
         "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
         "fd_scaling": primary.get("fd_scaling"),
         "fd_sweep": primary.get("fd_sweep"),
@@ -782,6 +934,36 @@ def write_final(
         raise SystemExit(2)
 
 
+def write_abort(save_dir: Path, args: argparse.Namespace, samples: list[dict], extras: dict) -> None:
+    meta = {
+        "task": "L2 Task 1 direct-step diagnostics",
+        "checkpoint": args.checkpoint,
+        "aborted_before_diagnostics": True,
+        "fd_validated": False,
+        "model_fd_validated": False,
+        "physical_tangent_validated": extras.get("physical_tangent_validated", "not_checked"),
+        "spectral_validated": extras.get(
+            "spectral_validated",
+            "not_requested" if not args.spectral_radius else False,
+        ),
+        "fd_sweep": extras.get("fd_sweep"),
+        "fd_eps": args.fd_eps,
+        "fd_tol": args.fd_tol,
+        "allow_unvalidated_fd": False,
+        "failed_tests": extras.get("failed_tests", []),
+        "physical_jvp": extras.get("physical_jvp"),
+        "windows": [
+            {"start": s["start_index"], "stems": s["stems"]} for s in samples
+        ],
+        "note": "Initial finite-difference epsilon check failed. Diagnostics were not run.",
+    }
+    save_dir.mkdir(parents=True, exist_ok=True)
+    (save_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"[abort] save_dir={save_dir} fd epsilon check failed", flush=True)
+    for item in meta["failed_tests"]:
+        print(f"  FAIL {item}", flush=True)
+
+
 def run_single(args: argparse.Namespace) -> None:
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -795,9 +977,13 @@ def run_single(args: argparse.Namespace) -> None:
         len(kept), args.rollout_length + 1, args.n_snapshots, args.seed
     )
     samples = write_sample_index(save_dir, kept, starts, window_len)
-    diags, rolls, extras = run_windows(
-        args, samples, list(range(len(samples)))
-    )
+    try:
+        diags, rolls, extras = run_windows(
+            args, samples, list(range(len(samples)))
+        )
+    except DiagnosticsAborted as exc:
+        write_abort(save_dir, args, samples, exc.extras)
+        raise SystemExit(2)
     diag_np, roll_np = _stack_results(
         diags, rolls, args.spectral_radius, args.dt
     )
@@ -828,7 +1014,13 @@ def run_worker(args: argparse.Namespace) -> None:
         f"[worker rank={args.gpu_rank}] windows={indices}",
         flush=True,
     )
-    diags, rolls, extras = run_windows(args, entries, indices)
+    try:
+        diags, rolls, extras = run_windows(args, entries, indices)
+    except DiagnosticsAborted as exc:
+        (save_dir / f"shard_{args.gpu_rank}_meta.json").write_text(
+            json.dumps(exc.extras, indent=2) + "\n"
+        )
+        raise SystemExit(2)
     path = save_shard(save_dir, args.gpu_rank, diags, rolls, extras, args)
     print(
         f"[worker rank={args.gpu_rank}] wrote {path}",
@@ -965,6 +1157,9 @@ def run_orchestrator(args: argparse.Namespace) -> None:
     for t in pumps:
         t.join(timeout=5)
     if any(c != 0 for c in codes):
+        if any(c == 2 for c in codes):
+            print(f"[orchestrator] fd validation aborted workers: {codes}", flush=True)
+            raise SystemExit(2)
         raise RuntimeError(f"worker exit codes: {codes}")
 
     diag_np, roll_np, metas = merge_shards(

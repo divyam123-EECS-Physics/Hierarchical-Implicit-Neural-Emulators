@@ -49,14 +49,28 @@ def quotient_halfwidth(trace_ci95, dim, dt):
     )
 
 
+def gates_pass(sweep_ok: bool, composition_rel_max: float, fd_additivity_rel: float, tol: float) -> bool:
+    """Epsilon agreement does not certify composition or additivity."""
+    return (
+        bool(sweep_ok)
+        and float(composition_rel_max) <= float(tol)
+        and float(fd_additivity_rel) <= float(tol)
+    )
+
+
 def _phi_image(tangent, u_model: torch.Tensor, v_model: torch.Tensor, norm: float) -> torch.Tensor:
-    """Phi'(u) v in model coordinates. The proxy returns v."""
+    """Phi'(u) v in model coordinates. The proxy returns v.
+
+    The solver sees the same dtype as the model tensors. A later cast back
+    to float64 does not restore a float32 round trip.
+    """
     if is_proxy(tangent):
         return v_model
-    u_phys = (u_model[0, 0].detach().float().cpu().numpy()) * norm
-    v_phys = (v_model[0, 0].detach().float().cpu().numpy()) * norm
-    jv = tangent.apply(u_phys, v_phys)
-    out = torch.from_numpy(np.asarray(jv, dtype=np.float32)) / norm
+    np_dtype = np.float64 if v_model.dtype == torch.float64 else np.float32
+    u_phys = np.asarray(u_model[0, 0].detach().cpu().numpy(), dtype=np_dtype) * np_dtype(norm)
+    v_phys = np.asarray(v_model[0, 0].detach().cpu().numpy(), dtype=np_dtype) * np_dtype(norm)
+    jv = np.asarray(tangent.apply(u_phys, v_phys), dtype=np_dtype)
+    out = torch.from_numpy(jv) / float(norm)
     return out.to(device=v_model.device, dtype=v_model.dtype).view_as(v_model)
 
 
@@ -79,6 +93,7 @@ def diagnose_point(
     ncv: int,
     maxiter: int,
     tol: float,
+    fd_tol: float = 1e-2,
 ) -> dict:
     """Hutchinson diagnostics at one teacher-forced point.
 
@@ -179,27 +194,72 @@ def diagnose_point(
 
     if spectral_radius:
         rad = rho_S(
-            step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed
+            step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed,
+            fd_tol=fd_tol,
         )
         rad["fd_additivity_rel"] = add["rel"]
         out["rho_S"] = rad
+        out["s_additivity_rel"] = rad["s_additivity_rel"]
+        out["spectral_validated"] = bool(rad["spectral_validated"])
+    else:
+        out["s_additivity_rel"] = float("nan")
+        out["spectral_validated"] = "not_requested"
+    out["composition_within_tol"] = bool(out["composition_rel_max"] <= float(fd_tol))
+    out["fd_additivity_within_tol"] = bool(out["fd_additivity_rel"] <= float(fd_tol))
     return out
 
 
-def rho_S(step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed) -> dict:
-    """Leading-magnitude eigenvalue of S. S uses D Phi' at u_{n+1}."""
+def _apply_S(step_fn, point, w, ds, eps_rel, tangent, norm):
+    """S w, with D Phi' at u_{n+1}. Proxy uses D."""
+    Bw, Kw = fd_both_z(step_fn, point, w, eps_rel)
+    if is_proxy(tangent):
+        correction = apply_D(Bw, ds)
+    else:
+        correction = apply_D(_phi_image(tangent, point.u_next, Bw, norm), ds)
+    return Kw - correction
+
+
+def s_additivity_rel(step_fn, point, ds, eps_rel, tangent, norm, seed: int) -> float:
+    """Relative residual of S(w1+w2) - S(w1) - S(w2)."""
+    gen = torch.Generator(device=point.z.device)
+    gen.manual_seed(int(seed) + 17)
+    w1 = torch.randn(point.z.shape, device=point.z.device, dtype=point.z.dtype, generator=gen)
+    w2 = torch.randn(point.z.shape, device=point.z.device, dtype=point.z.dtype, generator=gen)
+    s1 = _apply_S(step_fn, point, w1, ds, eps_rel, tangent, norm)
+    s2 = _apply_S(step_fn, point, w2, ds, eps_rel, tangent, norm)
+    both = _apply_S(step_fn, point, w1 + w2, ds, eps_rel, tangent, norm)
+    num = float((both - s1 - s2).reshape(-1).double().norm())
+    den = max(float(both.reshape(-1).double().norm()), FD_OUTPUT_FLOOR)
+    return num / den
+
+
+def rho_S(step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed, fd_tol: float = 1e-2) -> dict:
+    """Leading-magnitude eigenvalue of S. S uses D Phi' at u_{n+1}.
+
+    Arnoldi runs only after S itself passes the additivity tolerance.
+    A passing network epsilon sweep does not certify this result.
+    """
     n = int(point.z.numel())
-    proxy = is_proxy(tangent)
-    tag = "proxy" if proxy else "py2d_fd"
+    tag = "proxy" if is_proxy(tangent) else "py2d_fd"
+    add_rel = s_additivity_rel(step_fn, point, ds, eps_rel, tangent, norm, seed)
+    if not (add_rel <= float(fd_tol)):
+        return {
+            "value_real": float("nan"),
+            "value_imag": 0.0,
+            "radius": float("nan"),
+            "converged": False,
+            "error": (
+                f"S additivity residual {add_rel} exceeds fd_tol {fd_tol}; "
+                "Arnoldi skipped"
+            ),
+            "approximation": tag,
+            "s_additivity_rel": add_rel,
+            "spectral_validated": False,
+        }
 
     def matvec(v_np: np.ndarray) -> np.ndarray:
         w = _as_image(v_np, point.z)
-        Bw, Kw = fd_both_z(step_fn, point, w, eps_rel)
-        if proxy:
-            DPhi_next_B = apply_D(Bw, ds)
-        else:
-            DPhi_next_B = apply_D(_phi_image(tangent, point.u_next, Bw, norm), ds)
-        return (Kw - DPhi_next_B).detach().reshape(-1).float().cpu().numpy()
+        return _apply_S(step_fn, point, w, ds, eps_rel, tangent, norm).detach().reshape(-1).float().cpu().numpy()
 
     ncv_eff = min(max(int(ncv), 2), n - 1)
     if ncv_eff < 2:
@@ -210,6 +270,8 @@ def rho_S(step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed) -
             "converged": False,
             "error": f"state dim {n} is too small for ARPACK",
             "approximation": tag,
+            "s_additivity_rel": add_rel,
+            "spectral_validated": False,
         }
     op = spla.LinearOperator((n, n), matvec=matvec, dtype=np.float32)
     rng = np.random.default_rng(seed)
@@ -235,6 +297,8 @@ def rho_S(step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed) -
         "converged": converged,
         "error": err,
         "approximation": tag,
+        "s_additivity_rel": add_rel,
+        "spectral_validated": bool(converged),
     }
 
 
@@ -256,6 +320,7 @@ def flat_diag(diag: dict) -> dict[str, np.ndarray]:
         "trace_estimator_gap",
         "trace_estimator_gap_ci95",
         "fd_additivity_rel",
+        "s_additivity_rel",
         "n_fine",
         "n_coarse",
     ]

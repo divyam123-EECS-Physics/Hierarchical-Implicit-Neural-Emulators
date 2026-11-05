@@ -127,35 +127,66 @@ def propagate_augmented(step_at, points: list[L2Point], eps_u, eps_z, eps_rel: f
     return e_lin, eta_lin
 
 
-def _capture_retention_directions(points, eps_u, xi, sink: list) -> None:
-    """First nonzero accumulated injections, in model coordinates."""
+def validation_directions(points, eps_u, xi, e_lin, eta_lin, tangent, ds: int, norm: float) -> list:
+    """Directions the retention and linearized updates actually apply.
+
+    r_H uses (S_n, D Phi'_n S_n), not (S_n, 0). Checks the first nonzero
+    step, the middle step, and the last step. Zero slots are skipped.
+    """
+    t = len(eps_u)
     S = torch.zeros_like(eps_u[0])
     Z = torch.zeros_like(xi[0])
-    saw_s = False
-    saw_z = False
-    for n in range(len(eps_u)):
-        if not saw_s and _norm(S) > 0.0:
-            sink.append(
-                {
-                    "name": f"retention_S_step{n}",
-                    "point": points[n],
-                    "du": S.detach().clone(),
-                    "dz": torch.zeros_like(points[n].z),
-                }
-            )
-            saw_s = True
-        if n >= 1 and not saw_z and _norm(Z) > 0.0:
-            sink.append(
-                {
-                    "name": f"retention_Z_step{n}",
-                    "point": points[n],
-                    "du": torch.zeros_like(points[n].u),
-                    "dz": Z.detach().clone(),
-                }
-            )
-            saw_z = True
+    states = []
+    for n in range(t):
+        states.append((S.clone(), Z.clone()))
         S = S + eps_u[n]
         Z = Z + xi[n]
+    chosen: list[int] = []
+    first = next(
+        (
+            n
+            for n, (s, _z) in enumerate(states)
+            if _norm(s) > 0.0 or _norm(e_lin[n]) > 0.0 or _norm(eta_lin[n]) > 0.0
+        ),
+        None,
+    )
+    for n in (first, t // 2, t - 1):
+        if n is None or n in chosen or not (0 <= int(n) < t):
+            continue
+        chosen.append(int(n))
+    out = []
+    for n in chosen:
+        s_n, z_n = states[n]
+        pt = points[n]
+        if _norm(s_n) > 0.0:
+            image = _phi_image(tangent, pt.u, s_n, norm)
+            out.append(
+                {
+                    "name": f"rH_step{n}",
+                    "point": pt,
+                    "du": s_n,
+                    "dz": apply_D(image, ds),
+                }
+            )
+        if n >= 1 and _norm(z_n) > 0.0:
+            out.append(
+                {
+                    "name": f"rZ_step{n}",
+                    "point": pt,
+                    "du": torch.zeros_like(pt.u),
+                    "dz": z_n,
+                }
+            )
+        if _norm(e_lin[n]) > 0.0 or _norm(eta_lin[n]) > 0.0:
+            out.append(
+                {
+                    "name": f"lin_step{n}",
+                    "point": pt,
+                    "du": e_lin[n].detach().clone(),
+                    "dz": eta_lin[n].detach().clone(),
+                }
+            )
+    return out
 
 
 @torch.no_grad()
@@ -205,9 +236,6 @@ def rollout_diagnostics(
         eps_z.append(ez)
         xi.append(xi_k)
 
-    if direction_sink is not None:
-        _capture_retention_directions(points, eps_u, xi, direction_sink)
-
     # Free rollout from (u_0, D u_1). e_0 = eta_0 = 0.
     high = points[0].u.clone()
     z = points[0].z.clone()
@@ -222,6 +250,10 @@ def rollout_diagnostics(
         return lambda u, z, _t=points[k].t: model_step(ema_vit, u, z, _t)
 
     e_lin, eta_lin = propagate_augmented(step_at, points, eps_u, eps_z, eps_rel)
+    if direction_sink is not None:
+        direction_sink.extend(
+            validation_directions(points, eps_u, xi, e_lin, eta_lin, tangent, ds, norm)
+        )
 
     def apply_J_minus_I(k: int, vec: torch.Tensor) -> torch.Tensor:
         if _norm(vec) == 0.0:

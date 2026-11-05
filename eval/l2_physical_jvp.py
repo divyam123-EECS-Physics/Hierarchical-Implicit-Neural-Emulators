@@ -108,14 +108,15 @@ class Py2DFDTangent:
         self._ensure()
         return self._solver.advance_physical(np.asarray(u_phys, dtype=np.float64), self.emulator_dt)
 
-    def apply(self, u_phys: np.ndarray, v_phys: np.ndarray) -> np.ndarray:
+    def apply(self, u_phys: np.ndarray, v_phys: np.ndarray, eps_rel: float | None = None) -> np.ndarray:
         """Centered FD of Phi at u_phys in direction v_phys. Physical units."""
         self._ensure()
+        eps = self.fd_eps_rel if eps_rel is None else float(eps_rel)
         return self._fd(
             self.flow,
             np.asarray(u_phys, dtype=np.float64),
             np.asarray(v_phys, dtype=np.float64),
-            self.fd_eps_rel,
+            eps,
             1e-8,
         )
 
@@ -126,3 +127,41 @@ def make_tangent(mode: str, **py2d_kwargs):
     if mode == "py2d":
         return Py2DFDTangent(**py2d_kwargs)
     raise ValueError(f"unknown physical-jvp mode {mode!r}")
+
+
+def validate_physical_reference(tangent, u_now, u_next, eps: float, tol: float, seed: int, dt: float, stems) -> dict:
+    """Flow and finite-difference checks on one Task 1 reference pair.
+
+    Compares flow(u_now) with the supplied next frame at that frame's shape
+    and dt. Does not read a standalone replay of another dataset.
+    """
+    u_now = np.asarray(u_now, dtype=np.float64)
+    u_next = np.asarray(u_next, dtype=np.float64)
+    if u_now.shape != u_next.shape:
+        raise ValueError(f"reference shapes differ: {u_now.shape} vs {u_next.shape}")
+    pred = np.asarray(tangent.flow(u_now), dtype=np.float64)
+    denom = max(float(np.linalg.norm(u_next)), 1e-12)
+    flow_rel = float(np.linalg.norm(pred - u_next) / denom)
+    rng = np.random.default_rng(int(seed))
+    direction = rng.standard_normal(u_now.shape)
+    base = np.asarray(tangent.apply(u_now, direction, eps), dtype=np.float64)
+    checks = []
+    for factor, label in ((1.0 / 3.0, "eps/3"), (0.1, "eps/10")):
+        other = np.asarray(tangent.apply(u_now, direction, eps * factor), dtype=np.float64)
+        rel = float(np.linalg.norm(base - other) / max(float(np.linalg.norm(other)), 1e-12))
+        checks.append({"against": label, "rel": rel, "ok": bool(rel <= tol)})
+    fd_ok = bool(checks) and all(c["ok"] for c in checks)
+    flow_ok = bool(flow_rel <= float(tol))
+    return {
+        "ok": bool(flow_ok and fd_ok),
+        "flow_ok": flow_ok,
+        "fd_ok": fd_ok,
+        "flow_rel": flow_rel,
+        "nx": int(u_now.shape[-1]),
+        "dt": float(dt),
+        "stems": [int(s) for s in stems],
+        "source": "task1_window",
+        "checks": checks,
+        "tol": float(tol),
+        "eps": float(eps),
+    }
