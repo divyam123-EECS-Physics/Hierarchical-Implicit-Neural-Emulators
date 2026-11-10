@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Parasitic-block Arnoldi for the trained L=2 HINE.
+"""Parasitic-block Arnoldi for the trained L=2 HINE, and Task 4's DB spectrum.
 
 S_n v = K_n v - D Phi'_{n+1}(B_n v), with Phi' the unrestricted 512^2
 solver tangent at the true field u_{n+1}. A partial Ritz spectrum is not
 a certificate that every eigenvalue lies in the unit disk.
+
+--db-only skips that solver and S. It estimates eigenvalues of
+DB = D(dg/dz), the operator in Section 13.5.
 """
 
 from __future__ import annotations
@@ -78,6 +81,14 @@ def parse_args(argv=None):
     p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     p.add_argument("--model-dtype", choices=["float32", "float64"], default="float32")
     p.add_argument("--db", action="store_true", help="Also estimate the spectrum of D B")
+    p.add_argument(
+        "--db-only",
+        action="store_true",
+        help=(
+            "Task 4: eigenvalues of DB = D(dg/dz) only. "
+            "Skips the py2d solver and the parasitic block S."
+        ),
+    )
     p.add_argument("--save-vectors", action="store_true")
     p.add_argument("--product-steps", type=int, default=0)
     p.add_argument("--burn-in", type=int, default=2)
@@ -89,7 +100,14 @@ def parse_args(argv=None):
         default=0,
         help="Repeat this many states over ncv, epsilon, and dt_dns",
     )
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.db_only and args.db:
+        p.error("--db-only already computes DB; do not combine it with --db")
+    if args.db_only and not (8 <= int(args.k) <= 16):
+        p.error("--db-only asks for 8 to 16 eigenvalues per state (--k)")
+    if args.db_only and (args.product_steps or args.stability_subset):
+        p.error("--db-only does not run the parasitic product or the stability sweep")
+    return args
 
 
 def _solver(args, dt: float | None = None) -> Py2DInMemory:
@@ -253,6 +271,123 @@ def analyze_state(args, model, step, solver, sample, factor: int, tag: str = "S"
     return result
 
 
+def analyze_db_state(args, step, sample, factor: int) -> dict:
+    """Spectrum of DB = D(dg/dz) at (u_n, D u_{n+1}). No solver and no S."""
+    frames = sample["frames"]
+    u_n = frames[0]["omega"]
+    z = pool_avg(frames[1]["omega"], factor)
+    side = int(z.shape[0])
+    n = side * side
+
+    def db_vec(v_flat: np.ndarray) -> np.ndarray:
+        fine, _latent = step.jvp_latent(u_n, z, _reshape(v_flat, side))
+        return pool_avg(fine, factor).reshape(-1)
+
+    t0 = time.perf_counter()
+    spec = _eigs(
+        db_vec, n, args.k, args.ncv, args.maxiter, args.tol, args.seed + sample["sample"]
+    )
+    values = spec["values"]
+    distances = np.abs(values - 1.0) if len(values) else np.zeros(0, dtype=np.float64)
+    value_ok = np.isfinite(spec["residuals"]) & (spec["residuals"] <= float(args.tol))
+    return {
+        "tag": "DB",
+        "operator": "DB",
+        "sample": sample["sample"],
+        "stems": [fr["stem"] for fr in frames],
+        "times": [fr["time"] for fr in frames],
+        "converged": spec["converged"],
+        "value_converged": value_ok,
+        "error": spec["error"],
+        "matvecs": spec["matvecs"],
+        "wall_s": time.perf_counter() - t0,
+        "values": values,
+        "residuals": spec["residuals"],
+        "distance_from_1": distances,
+        "largest_modulus": float(np.max(np.abs(values))) if len(values) else float("nan"),
+        "partial_spectrum": True,
+        "k": spec["k"],
+        "ncv": spec["ncv"],
+    }
+
+
+def _save_db_state(save_dir: Path, result: dict) -> None:
+    payload = {
+        "operator": np.asarray("DB"),
+        "sample": np.asarray(result["sample"]),
+        "stems": np.asarray(result["stems"]),
+        "times": np.asarray(result["times"], dtype=np.float64),
+        "values_real": np.real(result["values"]),
+        "values_imag": np.imag(result["values"]),
+        "residuals": result["residuals"],
+        "converged": np.asarray(result["converged"]),
+        "value_converged": np.asarray(result["value_converged"], dtype=bool),
+        "distance_from_1": np.asarray(result["distance_from_1"], dtype=np.float64),
+        "largest_modulus": np.asarray(result["largest_modulus"]),
+        "matvecs": np.asarray(result["matvecs"]),
+        "wall_s": np.asarray(result["wall_s"]),
+        "partial_spectrum": np.asarray(True),
+        "k": np.asarray(result["k"]),
+        "ncv": np.asarray(result["ncv"]),
+    }
+    path = save_dir / f"state_{int(result['sample']):02d}.npz"
+    np.savez_compressed(path, **payload)
+    nearest = (
+        float(np.min(result["distance_from_1"])) if len(result["distance_from_1"]) else float("nan")
+    )
+    print(
+        f"[state {result['sample']:02d}] DB |lambda|_max={result['largest_modulus']:.6g} "
+        f"min|lambda-1|={nearest:.3e} converged={result['converged']} "
+        f"wall_s={result['wall_s']:.1f} -> {path.name}",
+        flush=True,
+    )
+
+
+def plot_db_argand(save_dir: Path) -> None:
+    """One Argand diagram of every saved DB Ritz value, with 0 and 1 marked."""
+    files = sorted(save_dir.glob("state_*.npz"))
+    if not files:
+        return
+    pieces_re, pieces_im, pieces_dist = [], [], []
+    pieces_id, pieces_res, pieces_ok = [], [], []
+    for path in files:
+        data = np.load(path)
+        re = np.asarray(data["values_real"], dtype=np.float64)
+        im = np.asarray(data["values_imag"], dtype=np.float64)
+        pieces_re.append(re)
+        pieces_im.append(im)
+        pieces_dist.append(np.asarray(data["distance_from_1"], dtype=np.float64))
+        pieces_id.append(np.full(re.shape, int(data["sample"]), dtype=np.int64))
+        pieces_res.append(np.asarray(data["residuals"], dtype=np.float64))
+        pieces_ok.append(np.asarray(data["value_converged"], dtype=bool))
+    re = np.concatenate(pieces_re) if pieces_re else np.zeros(0)
+    im = np.concatenate(pieces_im) if pieces_im else np.zeros(0)
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    if len(re):
+        ax.scatter(re, im, s=22, zorder=2, label="DB eigenvalues")
+    ax.scatter([0.0], [0.0], marker="x", s=90, c="k", zorder=3, label="0")
+    ax.scatter([1.0], [0.0], marker="+", s=140, c="C3", zorder=3, label="1")
+    ax.axhline(0.0, color="0.85", lw=0.6)
+    ax.axvline(0.0, color="0.85", lw=0.6)
+    ax.set_aspect("equal")
+    ax.set_xlabel("real")
+    ax.set_ylabel("imag")
+    ax.set_title(r"eigenvalue estimates of $DB = D\,\partial g/\partial z$")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(save_dir / "db_argand.png", dpi=140)
+    plt.close(fig)
+    np.savez_compressed(
+        save_dir / "db_eigenvalues.npz",
+        values_real=re,
+        values_imag=im,
+        distance_from_1=np.concatenate(pieces_dist) if pieces_dist else np.zeros(0),
+        residuals=np.concatenate(pieces_res) if pieces_res else np.zeros(0),
+        value_converged=np.concatenate(pieces_ok) if pieces_ok else np.zeros(0, dtype=bool),
+        sample=np.concatenate(pieces_id) if pieces_id else np.zeros(0, dtype=np.int64),
+    )
+
+
 def _save_state(save_dir: Path, result: dict) -> None:
     payload = {
         "sample": np.asarray(result["sample"]),
@@ -389,8 +524,44 @@ def run_rank(args) -> None:
             )
     model, step, ckpt_hash = _load_model(args)
     factor = int(model.ds_factors[0])
-    solver = _solver(args)
     mine = [s for s in samples if int(s["sample"]) % args.n_gpus == args.gpu_rank]
+    if args.db_only:
+        print(
+            f"[rank {args.gpu_rank}] DB-only states {[s['sample'] for s in mine]} "
+            f"factor={factor} k={args.k}",
+            flush=True,
+        )
+        for sample in mine:
+            _save_db_state(save_dir, analyze_db_state(args, step, sample, factor))
+        meta = base_metadata(
+            args,
+            {
+                "task": "L2 Task 4 spectrum of DB",
+                "operator": "DB = D dg/dz",
+                "section": "13.5",
+                "py2d_solver": "not used",
+                "parasitic_block": "not computed",
+                "checkpoint_sha256": ckpt_hash,
+                "delta_t_model": args.delta_t,
+                "pool_factor": factor,
+                "norm": args.norm,
+                "k": args.k,
+                "ncv": args.ncv,
+                "derivative": "torch.autograd.functional.jvp for dg/dz, then average-pool D",
+                "weights_unchanged": sha256_file(args.checkpoint) == ckpt_hash,
+                "states": [
+                    {"sample": s["sample"], "stems": [fr["stem"] for fr in s["frames"]]}
+                    for s in samples
+                ],
+            },
+        )
+        if args.n_gpus == 1:
+            plot_db_argand(save_dir)
+        if args.gpu_rank == 0:
+            write_json(save_dir / "metadata.json", meta)
+        return
+
+    solver = _solver(args)
     print(
         f"[rank {args.gpu_rank}] states {[s['sample'] for s in mine]} "
         f"factor={factor} delta_t={args.delta_t} dt_dns={args.solver_dt}",
@@ -481,7 +652,11 @@ def _orchestrate(args) -> None:
     codes = [proc.wait() for proc in procs]
     if any(code != 0 for code in codes):
         raise RuntimeError(f"worker exit codes {codes}")
-    plot_spectra(Path(args.save_dir))
+    save_dir = Path(args.save_dir)
+    if args.db_only:
+        plot_db_argand(save_dir)
+    else:
+        plot_spectra(save_dir)
 
 
 def main() -> None:

@@ -29,9 +29,10 @@ from l2_fd_jvp import (
     fd_both_uz,
     fd_both_z,
     fd_pair,
+    make_point,
     validate_fd_eps,
 )
-from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS
+from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS, plot_validation_flags, run_succeeded
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth, rho_S
 from l2_physical_jvp import ProxyTangent, Py2DFDTangent, validate_physical_reference
 from l2_retention import propagate_augmented, relative_residual, running_channels, validation_directions
@@ -503,6 +504,92 @@ def test_physical_reference_uses_the_supplied_frames():
     assert bad["stems"] == [13, 14]
 
 
+def test_spectral_failure_fails_the_job_and_its_plot():
+    assert run_succeeded(True, False, True) is False
+    assert run_succeeded(True, True, True) is True
+    assert run_succeeded(True, "not_requested", False) is True
+    assert run_succeeded(False, True, True) is False
+    other, spectral = plot_validation_flags(True, False, True)
+    assert other is True and spectral is False
+    other, spectral = plot_validation_flags(True, True, True)
+    assert other is True and spectral is True
+    other, spectral = plot_validation_flags(False, True, True)
+    assert other is False and spectral is True
+
+
+def test_physical_operator_and_check_share_epsilon():
+    tang = Py2DFDTangent(nx=4, fd_eps_rel=3e-4, emulator_dt=0.25)
+    assert tang.fd_eps_rel == 3e-4
+    seen = {}
+
+    def _fd(flow, u, v, eps, floor):
+        seen["eps"] = float(eps)
+        return np.array(v, copy=True)
+
+    tang._solver = object()
+    tang._fd = _fd
+    field = np.ones((4, 4))
+    direction = np.full((4, 4), 0.2)
+    out = tang.apply(field, direction)
+    assert seen["eps"] == 3e-4
+    assert np.allclose(out, direction)
+
+    class _Rec:
+        def __init__(self, eps):
+            self.fd_eps_rel = float(eps)
+            self.seen = []
+
+        def flow(self, u):
+            return np.array(u, dtype=np.float64, copy=True)
+
+        def apply(self, u, v, eps_rel=None):
+            used = self.fd_eps_rel if eps_rel is None else float(eps_rel)
+            self.seen.append(used)
+            return np.array(v, dtype=np.float64, copy=True)
+
+    rec = _Rec(tang.fd_eps_rel)
+    report = validate_physical_reference(
+        rec, field, field, rec.fd_eps_rel, 1e-6, 0, 0.25, [1, 2]
+    )
+    assert report["ok"]
+    assert report["eps"] == 3e-4
+    assert rec.seen[0] == 3e-4
+    assert abs(rec.seen[1] - 1e-4) < 1e-15
+    assert abs(rec.seen[2] - 3e-5) < 1e-15
+    proxy = ProxyTangent()
+    assert not hasattr(proxy, "fd_eps_rel")
+
+
+def test_float64_path_does_not_downcast():
+    class _Model:
+        ds_factors = [2]
+
+    value = np.float64(1.0 + 2.0 ** -40)
+    field = np.full((4, 4), value, dtype=np.float64)
+    point = make_point(
+        [field, field, field], _Model(), torch.device("cpu"), torch.float64, 1.0
+    )
+    assert point.u.dtype == torch.float64
+    assert abs(float(point.u.reshape(-1)[0]) - float(value)) < 1e-18
+
+    from ufno import AttentionOp
+    from util.fourier import SpectralConv2dSteerable
+
+    q = torch.randn(2, 4, 6, dtype=torch.float64)
+    k = torch.randn(2, 4, 6, dtype=torch.float64)
+    w = AttentionOp.apply(q, k)
+    assert w.dtype == torch.float64
+    w32 = AttentionOp.apply(q.float(), k.float())
+    assert w32.dtype == torch.float32
+
+    layer = SpectralConv2dSteerable(1, 1, 2, 2).double()
+    x = torch.randn(1, 1, 8, 8, dtype=torch.float64)
+    y = layer(x)
+    assert y.dtype == torch.float64
+    y32 = SpectralConv2dSteerable(1, 1, 2, 2).float()(x.float())
+    assert y32.dtype == torch.float32
+
+
 if __name__ == "__main__":
     test_fd_matches_dense_and_is_linear()
     test_eps_sweep_exact_on_linear()
@@ -521,4 +608,7 @@ if __name__ == "__main__":
     test_retention_direction_is_mixed()
     test_phi_image_keeps_float64()
     test_physical_reference_uses_the_supplied_frames()
+    test_spectral_failure_fails_the_job_and_its_plot()
+    test_physical_operator_and_check_share_epsilon()
+    test_float64_path_does_not_downcast()
     print("ok")

@@ -102,6 +102,24 @@ def base_metadata(args, extra: dict | None = None) -> dict:
     return meta
 
 
+def namespace_to_argv(ns) -> list[str]:
+    """Flatten an argparse namespace into a CLI, including store_true flags."""
+    argv = []
+    for key, value in vars(ns).items():
+        flag = "--" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                argv.append(flag)
+        elif isinstance(value, (list, tuple)):
+            argv.append(flag)
+            argv.extend(str(item) for item in value)
+        elif value is None:
+            continue
+        else:
+            argv.extend([flag, str(value)])
+    return argv
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, default=_json_default) + "\n")

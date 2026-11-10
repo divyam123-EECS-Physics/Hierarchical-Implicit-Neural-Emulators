@@ -110,13 +110,18 @@ class GroupNorm(torch.nn.Module):
 
 #----------------------------------------------------------------------------
 # Attention weight computation, i.e., softmax(Q^T * K).
-# Performs all computation using FP32, but uses the original datatype for
-# inputs/outputs/gradients to conserve memory.
+# Float32 inputs stay in float32. Float64 inputs stay in float64 so a
+# double-precision finite difference is not silently rounded. The backward
+# still uses float32; evaluation runs under torch.no_grad.
 
 class AttentionOp(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k):
-        w = torch.einsum('ncq,nck->nqk', q.to(torch.float32), (k / np.sqrt(k.shape[1])).to(torch.float32)).softmax(dim=2).to(q.dtype)
+        compute = q.dtype if q.dtype in (torch.float32, torch.float64) else torch.float32
+        scale = np.sqrt(k.shape[1])
+        w = torch.einsum(
+            "ncq,nck->nqk", q.to(compute), (k / scale).to(compute)
+        ).softmax(dim=2).to(q.dtype)
         ctx.save_for_backward(q, k, w)
         return w
 
@@ -226,10 +231,10 @@ class PositionalEmbedding(torch.nn.Module):
         self.endpoint = endpoint
 
     def forward(self, x):
-        freqs = torch.arange(start=0, end=self.num_channels//2, dtype=torch.float32, device=x.device)
+        freqs = torch.arange(start=0, end=self.num_channels//2, dtype=x.dtype, device=x.device)
         freqs = freqs / (self.num_channels // 2 - (1 if self.endpoint else 0))
         freqs = (1 / self.max_positions) ** freqs
-        x = x.ger(freqs.to(x.dtype))
+        x = x.ger(freqs)
         x = torch.cat([x.cos(), x.sin()], dim=1)
         return x
 

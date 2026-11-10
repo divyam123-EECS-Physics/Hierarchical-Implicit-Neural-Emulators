@@ -51,6 +51,15 @@ import numpy as np
 import scipy.io
 import torch
 
+# Match the float64 finite-difference audit: no autocast and no TF32.
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+torch.set_float32_matmul_precision("highest")
+if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
+    torch.backends.cuda.matmul.fp32_precision = "ieee"
+if hasattr(getattr(torch.backends.cudnn, "conv", None), "fp32_precision"):
+    torch.backends.cudnn.conv.fp32_precision = "ieee"
+
 _REPO = Path(__file__).resolve().parents[1]
 _EVAL = Path(__file__).resolve().parent
 for p in (_REPO, _EVAL):
@@ -58,6 +67,16 @@ for p in (_REPO, _EVAL):
         sys.path.insert(0, str(p))
 
 from eval_jacobian_blocks import choose_sample_starts
+
+# That import clears CUDA_VISIBLE_DEVICES unless --worker is set. The 4-GPU
+# parent must stay unbound. A one-GPU run must keep the GPU srun assigned.
+if (
+    not _parent_hides_gpus(sys.argv)
+    and "--worker" not in sys.argv
+    and os.environ.get("CUDA_VISIBLE_DEVICES") == ""
+):
+    del os.environ["CUDA_VISIBLE_DEVICES"]
+
 from eval_jacobian_manual_mse import load_kept_paths
 from eval_jacobian_manual_mse_plus import load_model
 from l2_fd_jvp import (
@@ -300,6 +319,9 @@ def _run_extras(
         "fd_sweep": sweep,
         "physical_flow": physical_flow,
         "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
+        "autocast_enabled": bool(torch.is_autocast_enabled()),
+        "allow_tf32_matmul": bool(torch.backends.cuda.matmul.allow_tf32),
+        "allow_tf32_cudnn": bool(torch.backends.cudnn.allow_tf32),
         "aborted_before_diagnostics": bool(aborted_before_diagnostics),
         "failed_tests": failed,
         "downsampling": f"avg_pool2d kernel=stride={ds}",
@@ -324,7 +346,28 @@ def _status_all(values: list):
         return values[0]
     bools = [v for v in values if isinstance(v, bool)]
     return all(bools) if bools else False
-    ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3, label=label)
+
+
+def run_succeeded(fd_validated: bool, spectral_validated, spectral_requested: bool) -> bool:
+    """Finite-difference success, and the spectral gate when Arnoldi was requested.
+
+    fd_validated stays the finite-difference flag. A failed spectral radius
+    does not change it, but it does fail the job.
+    """
+    if not bool(fd_validated):
+        return False
+    if not spectral_requested:
+        return True
+    return spectral_validated is True
+
+
+def plot_validation_flags(fd_validated: bool, spectral_validated, spectral_requested: bool) -> tuple[bool, bool]:
+    """Other plots follow the finite-difference gate. The spectral plot follows spectral status."""
+    if spectral_requested:
+        spectral_plot = spectral_validated is True
+    else:
+        spectral_plot = bool(fd_validated)
+    return bool(fd_validated), spectral_plot
 
 
 def _merge_fd_reports(base: dict, extra: dict) -> dict:
@@ -358,7 +401,13 @@ def _defined_mean(values: np.ndarray) -> np.ndarray:
     return out
 
 
-def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True) -> None:
+def write_plots(
+    save_dir: Path,
+    diag: dict,
+    rolls: dict,
+    validated: bool = True,
+    spectral_validated: bool = True,
+) -> None:
     plot_dir = save_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     idx = np.arange(diag["tr_Fu_over_N"].shape[0])
@@ -433,7 +482,7 @@ def write_plots(save_dir: Path, diag: dict, rolls: dict, validated: bool = True)
         ax.axhline(1.0, color="k", ls="--", lw=0.8)
         ax.set_xlabel("snapshot")
         ax.set_ylabel(r"$\rho(S)$")
-        ax.set_title(_title(f"Parasitic spectral radius ({kind})", validated))
+        ax.set_title(_title(f"Parasitic spectral radius ({kind})", spectral_validated))
         fig.tight_layout()
         fig.savefig(plot_dir / "rho_S.png", dpi=140)
         plt.close(fig)
@@ -554,9 +603,14 @@ def run_windows(
     global_indices: list[int],
 ) -> tuple[list[dict], list[dict], dict]:
     """Diagnose and roll out a list of windows. Returns diags, rolls, meta extras."""
-    device = torch.device(
-        args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu"
-    )
+    if args.device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "--device cuda but CUDA is not available; "
+            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES')!r}"
+        )
+    if torch.is_autocast_enabled() or torch.backends.cuda.matmul.allow_tf32 or torch.backends.cudnn.allow_tf32:
+        raise RuntimeError("Task 1 requires autocast and TF32 to stay disabled")
+    device = torch.device(args.device)
     if device.type == "cuda":
         torch.cuda.set_device(0)
     dtype = torch.float64 if args.model_dtype == "float64" else torch.float32
@@ -578,6 +632,7 @@ def run_windows(
         beta=args.beta,
         solver_dt=args.solver_dt,
         emulator_dt=args.dt,
+        fd_eps_rel=args.fd_eps,
     )
     ds = int(model.ds_factors[0])
 
@@ -633,19 +688,25 @@ def run_windows(
 
     physical_flow = None
     if args.physical_jvp == "py2d":
+        physical_eps = float(tangent.fd_eps_rel)
+        if physical_eps != float(args.fd_eps):
+            raise RuntimeError(
+                f"physical tangent epsilon {physical_eps} does not match --fd-eps {args.fd_eps}"
+            )
         stems0 = window_entries[0]["stems"]
         physical_flow = validate_physical_reference(
             tangent,
             first_frames[0],
             first_frames[1],
-            args.fd_eps,
+            physical_eps,
             args.fd_tol,
             args.seed,
             args.dt,
             stems0[:2],
         )
         print(
-            f"[physical] flow_rel={physical_flow['flow_rel']:.4e} "
+            f"[physical] eps={physical_flow['eps']:.4e} "
+            f"flow_rel={physical_flow['flow_rel']:.4e} "
             f"nx={physical_flow['nx']} dt={physical_flow['dt']} "
             f"ok={physical_flow['ok']}",
             flush=True,
@@ -852,8 +913,21 @@ def write_final(
         **diag_np,
         **{f"roll_{k}": v for k, v in roll_np.items()},
     )
-    validated = all(bool(m.get("fd_validated", False)) for m in metas)
-    write_plots(save_dir, diag_np, roll_np, validated=validated)
+    fd_ok = all(bool(m.get("fd_validated", False)) for m in metas)
+    spectral_meta = _status_all(
+        [m.get("spectral_validated", "not_requested") for m in metas]
+    )
+    other_plots, spectral_plot = plot_validation_flags(
+        fd_ok, spectral_meta, bool(args.spectral_radius)
+    )
+    succeeded = run_succeeded(fd_ok, spectral_meta, bool(args.spectral_radius))
+    write_plots(
+        save_dir,
+        diag_np,
+        roll_np,
+        validated=other_plots,
+        spectral_validated=spectral_plot,
+    )
 
     failed: list[str] = []
     for m in metas:
@@ -891,17 +965,18 @@ def write_final(
         ),
         "seed": args.seed,
         "fd_eps": args.fd_eps,
-        "fd_validated": validated,
+        "fd_validated": fd_ok,
         "model_fd_validated": _status_all([m.get("model_fd_validated", False) for m in metas]),
         "physical_tangent_validated": _status_all(
             [m.get("physical_tangent_validated", "not_applicable") for m in metas]
         ),
-        "spectral_validated": _status_all(
-            [m.get("spectral_validated", "not_requested") for m in metas]
-        ),
+        "spectral_validated": spectral_meta,
         "physical_flow": primary.get("physical_flow"),
         "aborted_before_diagnostics": any(m.get("aborted_before_diagnostics") for m in metas),
         "allow_unvalidated_fd": bool(args.allow_unvalidated_fd),
+        "autocast_enabled": bool(primary.get("autocast_enabled", False)),
+        "allow_tf32_matmul": bool(primary.get("allow_tf32_matmul", False)),
+        "allow_tf32_cudnn": bool(primary.get("allow_tf32_cudnn", False)),
         "fd_scaling": primary.get("fd_scaling"),
         "fd_sweep": primary.get("fd_sweep"),
         "n_probes": args.n_probes,
@@ -924,13 +999,15 @@ def write_final(
     }
     (save_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(
-        f"[done] save_dir={save_dir} failed={len(failed)} fd_validated={validated}",
+        f"[done] save_dir={save_dir} failed={len(failed)} "
+        f"fd_validated={fd_ok} spectral_validated={spectral_meta} "
+        f"succeeded={succeeded}",
         flush=True,
     )
     if failed:
         for item in failed:
             print(f"  FAIL {item}", flush=True)
-    if not validated and not args.allow_unvalidated_fd:
+    if not succeeded and not args.allow_unvalidated_fd:
         raise SystemExit(2)
 
 

@@ -24,9 +24,12 @@ early, middle, and late step. If the initial epsilon check fails and
 `--allow-unvalidated-fd` is absent, the run writes metadata and exits 2
 before the diagnostic windows. `--spectral-radius` runs Arnoldi only after
 `S` itself passes the same tolerance; `spectral_validated` stays false
-otherwise. `--physical-jvp py2d` records a separate
-`physical_tangent_validated` from the Task 1 frames at their own `nx` and
-`--dt`. Proxy mode stores `not_applicable` there, not true.
+otherwise. That spectral flag does not change `fd_validated`, but when
+`--spectral-radius` is requested it fails the job and labels
+`plots/rho_S.png` UNVALIDATED. The other plots follow `fd_validated`.
+`--physical-jvp py2d` builds the tangent at `--fd-eps` and checks that same
+epsilon on the Task 1 frames at their own `nx` and `--dt`. Proxy mode does
+not use that physical epsilon and stores `not_applicable`, not true.
 
 ## Metric → equation
 

@@ -62,8 +62,9 @@ def make_point(
     ds = int(model.ds_factors[0])
 
     def _field(arr: np.ndarray) -> torch.Tensor:
+        src = np.ascontiguousarray(np.asarray(arr))
         return (
-            torch.from_numpy(np.asarray(arr, dtype=np.float32))
+            torch.from_numpy(src)
             .to(device=device, dtype=dtype)
             .unsqueeze(0)
             .unsqueeze(0)
@@ -93,6 +94,8 @@ def apply_D(v: torch.Tensor, ds: int) -> torch.Tensor:
 
 @torch.no_grad()
 def model_step(ema_vit: torch.nn.Module, u: torch.Tensor, z: torch.Tensor, t: torch.Tensor):
+    if torch.is_autocast_enabled():
+        raise RuntimeError("Task 1 finite differences require autocast to be off")
     high, coarses = ema_vit(u, [z], t)
     return high, coarses[0]
 

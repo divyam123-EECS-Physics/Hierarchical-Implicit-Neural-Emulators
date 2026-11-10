@@ -88,17 +88,25 @@ Synchronization screen:
 ```bash
 python eval/task5_sync_screen.py \
   --kc 0 4 8 12 16 20 24 32 64 --T 2.0 --n-segments 3 --n-directions 3 \
-  --also-dt 5e-5 \
+  --also-dt 5e-5 --n-gpus 4 --skip-existing \
   --save-dir /pscratch/sd/d/divyam/hine_runs/py2d_sync/square_kc
 ```
+
+`--n-gpus 4` gives each GPU the tasks whose index modulo 4 equals its rank.
+`--skip-existing` leaves a finished `kc*_seg*_dir*.npz` in place. The summary
+and both plots are written after every rank has finished.
 
 `A_QQ` versus `Psi`:
 
 ```bash
 python eval/task5_hine_vs_conditional.py \
   --n-states 8 --n-directions 4 --stability-subset 2 \
+  --n-gpus 4 --skip-existing \
   --save-dir /pscratch/sd/d/divyam/hine_runs/plus_L2_m32/task5_hine_vs_cond/n8
 ```
+
+Cases are split the same way, one `(state, direction, epsilon)` per file,
+and `comparisons.npz` is written after the ranks join.
 
 ## Plots
 

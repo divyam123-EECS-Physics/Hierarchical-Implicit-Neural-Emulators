@@ -104,13 +104,15 @@ class SpectralConv2dSteerable(nn.Module):
         # Compute Fourier coeffcients up to factor of e^(- something constant)
         x_ft = torch.fft.rfft2(x)
 
-        # Multiply relevant Fourier modes
+        # Multiply relevant Fourier modes. complex64 would round a float64
+        # activation down to float32 inside the finite-difference step.
+        complex_dtype = torch.complex128 if x.dtype == torch.float64 else torch.complex64
         out_ft = torch.zeros(
             batchsize,
             self.out_channels,
             x.size(-2),
             x.size(-1) // 2 + 1,
-            dtype=torch.cfloat,
+            dtype=complex_dtype,
             device=x.device,
         )
         out_ft[:, :, : self.modes1, : self.modes2] = batchmul2ds(

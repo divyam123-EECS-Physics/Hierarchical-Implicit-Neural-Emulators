@@ -193,6 +193,39 @@ def test_model_jvp_norm_cancels():
     assert np.allclose(a1, 0.3 * v, atol=1e-5)
 
 
+def test_task5_partitions_cover_every_case():
+    from task5_hine_vs_conditional import hine_case_keys
+    from task5_sync_screen import _row_from_npz, sync_task_keys
+
+    keys = sync_task_keys(3, [0, 4, 8, 12, 16, 20, 24, 32, 64], 3)
+    assert len(keys) == 81
+    assert len(set(keys)) == 81
+    counts = [sum(index % 4 == rank for index in range(len(keys))) for rank in range(4)]
+    assert counts == [21, 20, 20, 20]
+    cases = hine_case_keys(8, 4, 1e-3, 2, [1e-4, 1e-3, 1e-2])
+    assert len(cases) == 32 + 16
+    per_sample = {}
+    for sample, _direction, eps in cases:
+        per_sample.setdefault(sample, set()).add(eps)
+    assert len(per_sample[0]) == 3
+    assert len(per_sample[2]) == 1
+    path = Path("/tmp/task5_old_segment.npz")
+    np.savez_compressed(
+        path,
+        kc=np.asarray(4),
+        stem=np.asarray(98456),
+        lambda_c=np.asarray(-0.3),
+        log_gains=np.asarray([-0.1, -0.2]),
+        first_block_E=np.asarray([1e-3, 9e-4]),
+        dt_dns=np.asarray(1e-4),
+        coarse_rms=np.asarray(1e-15),
+    )
+    row = _row_from_npz(path, 0, 1, 984.56, 0.05)
+    assert row["kc"] == 4 and row["direction"] == 1
+    assert row["underflow"] is False
+    assert abs(row["step_factor"] - np.exp(-0.3 * 0.05)) < 1e-12
+
+
 if __name__ == "__main__":
     test_toy_roots()
     test_steps_for_and_fd()
@@ -201,4 +234,5 @@ if __name__ == "__main__":
     test_s_uses_phi_at_n_plus_1()
     test_continuous_clamp_differs_from_endpoint()
     test_model_jvp_norm_cancels()
+    test_task5_partitions_cover_every_case()
     print("ok")

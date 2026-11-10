@@ -10,8 +10,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
+
+_argv = sys.argv[1:]
+if "--worker" not in _argv and "--n-gpus" in _argv:
+    _n = int(_argv[_argv.index("--n-gpus") + 1])
+    if _n > 1:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
@@ -35,7 +42,15 @@ from py2d_inmem import (
     rms,
     truncate_field,
 )
-from task35_common import base_metadata, load_omega, rel_rms, sample_windows, sha256_file, write_json
+from task35_common import (
+    base_metadata,
+    load_omega,
+    namespace_to_argv,
+    rel_rms,
+    sample_windows,
+    sha256_file,
+    write_json,
+)
 
 
 def parse_args(argv=None):
@@ -70,7 +85,30 @@ def parse_args(argv=None):
     p.add_argument("--nx", type=int, default=512)
     p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     p.add_argument("--model-dtype", choices=["float32", "float64"], default="float32")
+    p.add_argument("--n-gpus", type=int, default=1)
+    p.add_argument("--gpu-rank", type=int, default=0)
+    p.add_argument("--worker", action="store_true")
+    p.add_argument("--skip-existing", action="store_true")
     return p.parse_args(argv)
+
+
+def hine_case_keys(n_states, n_directions, fd_eps, stability_subset, eps_sweep) -> list[tuple[int, int, float]]:
+    """(sample, direction, eps), primary epsilon first, then the subset sweep."""
+    keys = []
+    primary = float(fd_eps)
+    for sample in range(n_states):
+        for direction in range(n_directions):
+            keys.append((sample, direction, primary))
+            if sample < stability_subset:
+                for eps in eps_sweep:
+                    eps = float(eps)
+                    if abs(eps - primary) >= 1e-15:
+                        keys.append((sample, direction, eps))
+    return keys
+
+
+def case_filename(sample: int, direction: int, eps: float) -> str:
+    return f"s{sample:02d}_d{direction}_eps{eps:.1e}.npz"
 
 
 def _direction(rng, field, factor, eps_unused):
@@ -158,7 +196,63 @@ def _plot(save_dir: Path, rows: list[dict]) -> None:
     plt.close(fig)
 
 
-def execute(args) -> list[dict]:
+def _save_case(path: Path, row: dict) -> None:
+    np.savez_compressed(path, **{key: np.asarray(value) for key, value in row.items()})
+
+
+def _load_cases(args, save_dir: Path) -> list[dict]:
+    keys = hine_case_keys(
+        args.n_states, args.n_directions, args.fd_eps, args.stability_subset, args.eps_sweep
+    )
+    rows = []
+    missing = []
+    for sample, direction, eps in keys:
+        path = save_dir / case_filename(sample, direction, eps)
+        if not path.is_file():
+            missing.append(path.name)
+            continue
+        data = np.load(path)
+        row = {key: data[key] for key in data.files}
+        parsed = {}
+        for key, value in row.items():
+            array = np.asarray(value)
+            parsed[key] = array.reshape(-1)[0].item() if array.shape == () or array.size == 1 else array
+        rows.append(parsed)
+    if missing:
+        raise RuntimeError(f"{len(missing)} HINE cases missing under {save_dir}: {missing[:8]}")
+    return rows
+
+
+def _finalize(args, save_dir: Path, note: dict) -> list[dict]:
+    rows = _load_cases(args, save_dir)
+    np.savez_compressed(
+        save_dir / "comparisons.npz",
+        **{key: np.asarray([r[key] for r in rows]) for key in rows[0]},
+    )
+    primary = [r for r in rows if abs(float(r["eps"]) - args.fd_eps) < 1e-15]
+    _plot(save_dir, primary)
+    meta = base_metadata(
+        args,
+        {
+            "task": "A_QQ versus conditional Psi",
+            "floor": args.floor,
+            "delta_t_model": args.delta_t,
+            "n_gpus": args.n_gpus,
+            "split": "case index modulo n_gpus",
+            "note": (
+                "Psi integrates the true 512^2 field with its pooled coarse path "
+                "clamped every microstep. A_QQ differentiates g at the truncated "
+                "256^2 field with the latent fixed."
+            ),
+            "weights_sha256": sha256_file(args.checkpoint),
+            **note,
+        },
+    )
+    write_json(save_dir / "metadata.json", meta)
+    return rows
+
+
+def _prepare(args):
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
@@ -182,66 +276,102 @@ def execute(args) -> list[dict]:
             raise RuntimeError(
                 f"kept-frame spacing {sample['dt_kept']} != --delta-t {args.delta_t}"
             )
-    rows = []
-    for sample in samples:
-        for direction in range(args.n_directions):
-            row = compare_one(
-                args, step, solver, projector, sample, direction, args.fd_eps, factor, args.floor
-            )
-            rows.append(row)
-            print(
-                f"[H] sample={row['sample']} dir={direction} "
-                f"A={row['gain_A']:.4g} Psi={row['gain_Psi']:.4g} "
-                f"mismatch={row['mismatch']:.4g} cos={row['cosine']:.4g}",
-                flush=True,
-            )
-            if sample["sample"] < args.stability_subset:
-                for eps in args.eps_sweep:
-                    if abs(eps - args.fd_eps) < 1e-15:
-                        continue
-                    extra = compare_one(
-                        args, step, solver, projector, sample, direction, eps, factor, args.floor
-                    )
-                    rows.append(extra)
-    if args.also_dt > 0 and rows:
-        alt = argparse.Namespace(**vars(args))
-        alt.solver_dt = args.also_dt
-        alt.also_dt = 0.0
-        alt.n_states = min(1, args.n_states)
-        alt.n_directions = 1
-        alt.stability_subset = 0
-        alt.save_dir = str(save_dir / f"dt_{args.also_dt:.0e}")
-        execute(alt)
-    np.savez_compressed(
-        save_dir / "comparisons.npz",
-        **{key: np.asarray([r[key] for r in rows]) for key in rows[0]},
+    note = {
+        "pool_factor": factor,
+        "projector": projector.describe(),
+        "right_inverse_rms": projector.right_inverse_error(),
+        "solver": solver.cfg.as_dict(),
+    }
+    return save_dir, step, solver, projector, factor, samples, note
+
+
+def execute(args, *, summarize: bool) -> list[dict] | None:
+    save_dir, step, solver, projector, factor, samples, note = _prepare(args)
+    by_sample = {int(sample["sample"]): sample for sample in samples}
+    keys = hine_case_keys(
+        args.n_states, args.n_directions, args.fd_eps, args.stability_subset, args.eps_sweep
     )
-    _plot(save_dir, [r for r in rows if abs(r["eps"] - args.fd_eps) < 1e-15])
-    inv_err = projector.right_inverse_error()
-    meta = base_metadata(
-        args,
-        {
-            "task": "A_QQ versus conditional Psi",
-            "pool_factor": factor,
-            "projector": projector.describe(),
-            "right_inverse_rms": inv_err,
-            "floor": args.floor,
-            "delta_t_model": args.delta_t,
-            "solver": solver.cfg.as_dict(),
-            "note": (
-                "Psi integrates the true 512^2 field with its pooled coarse path "
-                "clamped every microstep. A_QQ differentiates g at the truncated "
-                "256^2 field with the latent fixed."
-            ),
-            "weights_sha256": sha256_file(args.checkpoint),
-        },
-    )
-    write_json(save_dir / "metadata.json", meta)
-    return rows
+    owned = [
+        key
+        for index, key in enumerate(keys)
+        if args.n_gpus <= 1 or index % args.n_gpus == args.gpu_rank
+    ]
+    print(f"[H] rank {args.gpu_rank}/{args.n_gpus} owns {len(owned)} cases", flush=True)
+    if args.gpu_rank == 0 or args.n_gpus <= 1:
+        write_json(save_dir / "projector.json", note)
+    for sample_index, direction, eps in owned:
+        path = save_dir / case_filename(sample_index, direction, eps)
+        if args.skip_existing and path.is_file():
+            print(f"[H] skip {path.name}", flush=True)
+            continue
+        row = compare_one(
+            args, step, solver, projector, by_sample[sample_index], direction, eps, factor, args.floor
+        )
+        print(
+            f"[H] sample={row['sample']} dir={direction} eps={eps:.1e} "
+            f"A={row['gain_A']:.4g} Psi={row['gain_Psi']:.4g} "
+            f"mismatch={row['mismatch']:.4g} cos={row['cosine']:.4g}",
+            flush=True,
+        )
+        _save_case(path, row)
+    if not summarize:
+        return None
+    return _finalize(args, save_dir, note)
+
+
+def _run_distributed(args) -> None:
+    save_dir = Path(args.save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    script = str(Path(__file__).resolve())
+    procs = []
+    for rank in range(args.n_gpus):
+        child = argparse.Namespace(**vars(args))
+        child.worker = True
+        child.gpu_rank = rank
+        child.also_dt = 0.0
+        cmd = [sys.executable, "-u", script, *namespace_to_argv(child)]
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(rank)
+        print(f"[H] launch rank {rank}", flush=True)
+        procs.append(subprocess.Popen(cmd, env=env))
+    codes = [proc.wait() for proc in procs]
+    if any(code != 0 for code in codes):
+        raise RuntimeError(f"HINE workers exited {codes}")
+    note_path = save_dir / "projector.json"
+    note = {}
+    if note_path.is_file():
+        import json
+        note = json.loads(note_path.read_text())
+    _finalize(args, save_dir, note)
+
+
+def _also(args) -> None:
+    if args.also_dt <= 0 or args.worker:
+        return
+    alt = argparse.Namespace(**vars(args))
+    alt.solver_dt = args.also_dt
+    alt.also_dt = 0.0
+    alt.n_states = min(1, args.n_states)
+    alt.n_directions = 1
+    alt.stability_subset = 0
+    alt.save_dir = str(Path(args.save_dir) / f"dt_{args.also_dt:.0e}")
+    if alt.n_gpus > 1:
+        _run_distributed(alt)
+    else:
+        execute(alt, summarize=True)
 
 
 def main() -> None:
-    execute(parse_args())
+    args = parse_args()
+    if args.n_gpus < 1:
+        raise SystemExit("--n-gpus must be >= 1")
+    if args.n_gpus > 1 and not args.worker:
+        _run_distributed(args)
+        _also(args)
+        return
+    execute(args, summarize=args.n_gpus <= 1)
+    if args.n_gpus <= 1:
+        _also(args)
 
 
 if __name__ == "__main__":
