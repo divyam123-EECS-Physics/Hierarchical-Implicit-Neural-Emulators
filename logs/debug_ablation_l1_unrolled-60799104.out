@@ -1,138 +1,0 @@
-/var/spool/slurmd/job60799104/slurm_script: line 24: netstat: command not found
-MASTER_ADDR=127.0.0.1 MASTER_PORT=51838
-| distributed init (rank 0): env://, gpu 0
-/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
-  return func(*args, **kwargs)
-[rank0]:[W1104 05:12:22.523791681 ProcessGroupNCCL.cpp:5310] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
-[05:12:23.207821] job dir: /global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
-[05:12:23.208563] Namespace(ablation='l1_unrolled',
-train_unroll=15,
-aux_levels=0,
-aux_loss_weight=1.0,
-ds_factors=[],
-img_size=256,
-num_of_frame=16,
-batch_size=4,
-epochs=1,
-eval_freq=1,
-save_last_freq=1,
-evaluate=False,
-weight_decay=0.05,
-lr=0.0003,
-blr=0.0001,
-min_lr=0.0,
-lr_schedule='constant',
-warmup_epochs=10,
-acc_grad=1,
-ema_rate=0.9995,
-data_path='./data/imagenet',
-output_dir='output/output_debug_ablation_l1_unrolled',
-log_dir='output/output_debug_ablation_l1_unrolled',
-device='cuda',
-seed=1,
-resume='output/output_debug_ablation_l1_unrolled',
-resume_epoch=0,
-start_epoch=0,
-num_workers=4,
-pin_mem=True,
-world_size=1,
-local_rank=-1,
-dist_on_itp=False,
-dist_url='env://',
-rank=0,
-gpu=0,
-distributed=True,
-dist_backend='nccl')
-[05:12:23.368860] 16204
-  0%|          | 0/64 [00:00<?, ?it/s]  2%|▏         | 1/64 [00:00<00:30,  2.05it/s]  3%|▎         | 2/64 [00:00<00:27,  2.23it/s]  5%|▍         | 3/64 [00:01<00:26,  2.31it/s]  6%|▋         | 4/64 [00:01<00:24,  2.41it/s]  8%|▊         | 5/64 [00:02<00:24,  2.39it/s]  9%|▉         | 6/64 [00:02<00:24,  2.41it/s] 11%|█         | 7/64 [00:02<00:23,  2.47it/s] 12%|█▎        | 8/64 [00:03<00:22,  2.49it/s] 14%|█▍        | 9/64 [00:03<00:21,  2.50it/s] 16%|█▌        | 10/64 [00:04<00:21,  2.50it/s] 17%|█▋        | 11/64 [00:04<00:20,  2.54it/s] 19%|█▉        | 12/64 [00:04<00:20,  2.53it/s] 20%|██        | 13/64 [00:05<00:19,  2.55it/s] 22%|██▏       | 14/64 [00:05<00:19,  2.55it/s] 23%|██▎       | 15/64 [00:06<00:19,  2.56it/s] 23%|██▎       | 15/64 [00:06<00:21,  2.33it/s]
-[05:12:29.848485] 121
-  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  5.26it/s]100%|██████████| 1/1 [00:00<00:00,  5.24it/s]
-[05:12:30.045215] train dataset 4081
-[05:12:30.046158] validation dataset 106
-[05:12:30.046962] ablation=l1_unrolled frames=16 unroll=15 aux_levels=0 ds_factors=[]
-[05:12:30.447438] Number of trainable parameters: 34.884994M
-[05:12:30.641708] actual lr: 3.00e-04
-[05:12:30.642329] effective batch size: 4
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/misc.py:251: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
-  self._scaler = torch.cuda.amp.GradScaler()
-[05:12:35.621174] Training from scratch
-[05:12:35.621951] Start training for 1 epochs
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py:85: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-[rank0]:[W1104 05:12:43.851702392 CUDACachingAllocator.cpp:3934] memory allocation failed with OOM on device 0 while trying to allocate 25165824 bytes (free: 8716288, total: 42404806656).
-[rank0]:[W1104 05:12:43.861423235 CUDACachingAllocator.cpp:3934] memory allocation failed with OOM on device 0 while trying to allocate 20971520 bytes (free: 4521984, total: 42404806656).
-[rank0]:[W1104 05:12:43.861921588 CUDACachingAllocator.cpp:3934] memory allocation failed with OOM on device 0 while trying to allocate 20971520 bytes (free: 4521984, total: 42404806656).
-[rank0]: Traceback (most recent call last):
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/main_ablation.py", line 370, in <module>
-[rank0]:     main(args)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/main_ablation.py", line 285, in main
-[rank0]:     train_stats, _ = train_one_epoch(
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py", line 86, in train_one_epoch
-[rank0]:     loss, high_loss, aux_losses = model(x)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1783, in _wrapped_call_impl
-[rank0]:     return self._call_impl(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1794, in _call_impl
-[rank0]:     return forward_call(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1891, in forward
-[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/parallel/distributed.py", line 1716, in _run_ddp_forward
-[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1783, in _wrapped_call_impl
-[rank0]:     return self._call_impl(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1794, in _call_impl
-[rank0]:     return forward_call(*args, **kwargs)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/model_ablation.py", line 298, in forward
-[rank0]:     return self.compute_loss(img_seq, use_ema=False)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/model_ablation.py", line 291, in compute_loss
-[rank0]:     pred, _ = self._predict(net, pred)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/model_ablation.py", line 259, in _predict
-[rank0]:     out = net(high)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1783, in _wrapped_call_impl
-[rank0]:     return self._call_impl(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1794, in _call_impl
-[rank0]:     return forward_call(*args, **kwargs)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/model_ablation.py", line 191, in forward
-[rank0]:     x = block(x, emb)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1783, in _wrapped_call_impl
-[rank0]:     return self._call_impl(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1794, in _call_impl
-[rank0]:     return forward_call(*args, **kwargs)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/ufno.py", line 194, in forward
-[rank0]:     x = self.fno(silu(self.fno_norm(x)))
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1783, in _wrapped_call_impl
-[rank0]:     return self._call_impl(*args, **kwargs)
-[rank0]:   File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1794, in _call_impl
-[rank0]:     return forward_call(*args, **kwargs)
-[rank0]:   File "/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/fourier.py", line 108, in forward
-[rank0]:     out_ft = torch.zeros(
-[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB. GPU 0 has a total capacity of 39.49 GiB of which 4.31 MiB is free. Including non-PyTorch memory, this process has 39.48 GiB memory in use. Of the allocated memory 38.08 GiB is allocated by PyTorch, and 455.67 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
-E1104 05:12:44.952000 1716452 /pscratch/sd/d/divyam/conda2/envs/hine/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 0 (pid: 1716595) of binary: /global/homes/d/divyam/.conda/envs/hine/bin/python
-Traceback (most recent call last):
-  File "/global/homes/d/divyam/.conda/envs/hine/bin/torchrun", line 6, in <module>
-    sys.exit(main())
-  File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 380, in wrapper
-    return f(*args, **kwargs)
-  File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/run.py", line 1138, in main
-    run(args)
-  File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/run.py", line 1129, in run
-    elastic_launch(
-  File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 197, in __call__
-    return launch_agent(
-  File "/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 386, in launch_agent
-    raise ChildFailedError(
-torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
-============================================================
-main_ablation.py FAILED
-------------------------------------------------------------
-Failures:
-  <NO_OTHER_FAILURES>
-------------------------------------------------------------
-Root Cause (first observed failure):
-[0]:
-  time      : 2026-11-04_05:12:44
-  host      : nid001012-hsn0
-  rank      : 0 (local_rank: 0)
-  exitcode  : 1 (pid: 1716595) 
-  error_file: <N/A>
-  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
-============================================================

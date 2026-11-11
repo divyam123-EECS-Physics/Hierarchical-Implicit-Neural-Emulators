@@ -28,8 +28,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from coarse_projectors import PoolingProjector, SharpProjector
-from py2d_inmem import DNS_DATA, Py2DConfig, Py2DInMemory, rms, steps_for
+from coarse_projectors import PoolingProjector, SharpProjector, q_model
+from py2d_inmem import DNS_DATA, Py2DConfig, Py2DInMemory, rms, steps_for, truncate_field
 from task35_common import base_metadata, load_omega, namespace_to_argv, sample_windows, write_json
 
 
@@ -41,7 +41,9 @@ def parse_args(argv=None):
     p.add_argument("--n-directions", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--kc", type=int, nargs="+", default=[0, 8, 16, 32])
-    p.add_argument("--cutoff-shape", choices=["square", "radial"], default="square")
+    p.add_argument("--cutoff-shape", choices=["square", "radial", "pooling"], default="square")
+    p.add_argument("--pool-factors", type=int, nargs="+", default=[2, 4, 8, 16, 32])
+    p.add_argument("--nx-model", type=int, default=256)
     p.add_argument("--T", type=float, default=0.5, help="Physical time of one segment")
     p.add_argument("--tau", type=float, default=0.05, help="Renormalization interval")
     p.add_argument("--burn-in-blocks", type=int, default=2)
@@ -80,8 +82,17 @@ def sync_task_keys(n_segments: int, kcs, n_directions: int) -> list[tuple[int, i
     return keys
 
 
-def segment_filename(kc: int, segment: int, direction: int) -> str:
-    return f"kc{kc}_seg{segment}_dir{direction}.npz"
+def segment_filename(level: int, segment: int, direction: int, kind: str = "kc") -> str:
+    return f"{kind}{level}_seg{segment}_dir{direction}.npz"
+
+
+def screen_levels(args) -> tuple[list[int], str]:
+    """Levels being swept, and the filename prefix (kc or pool)."""
+    if args.cutoff_shape == "pooling":
+        if not args.pool_factors:
+            raise ValueError("--pool-factors is required when --cutoff-shape pooling")
+        return [int(factor) for factor in args.pool_factors], "pool"
+    return [int(kc) for kc in args.kc], "kc"
 
 
 def dt_dirname(dt: float) -> str:
@@ -97,10 +108,23 @@ def _make_solver(args, dt: float) -> Py2DInMemory:
     )
 
 
-def _projector(solver, kc: int, shape: str):
-    if kc == 0:
+def _projector(solver, level: int, shape: str, nx_model: int):
+    if shape == "pooling":
+        return PoolingProjector(solver.cfg.nx, nx_model, int(level))
+    if level == 0:
         return None
-    return SharpProjector(solver, kc, shape)
+    return SharpProjector(solver, level, shape)
+
+
+def _final_fine_256(solver, ref, fol, projector, factor: int, nx_model: int) -> np.ndarray:
+    """Unit-RMS fine difference on the model grid at the end of a segment."""
+    diff = fol[1] - ref[1]
+    fine_512 = np.array(projector.Q_phys_hat(diff), dtype=np.float64)
+    fine = q_model(truncate_field(fine_512, nx_model), factor)
+    scale = rms(fine)
+    if scale == 0.0 or not np.isfinite(scale):
+        return np.zeros((nx_model, nx_model), dtype=np.float64)
+    return fine / scale
 
 
 def _initial_follower(solver, omega, eps, projector, rng):
@@ -156,6 +180,8 @@ def run_segment(solver, omega, eps, tau, total, burn_in, projector, rng) -> dict
         "coarse_rms_of_perturbation": coarse_rms,
         "first_block_E": first_series,
         "factor": float(np.exp(rate * tau)) if np.isfinite(rate) else float("nan"),
+        "ref": ref,
+        "fol": fol,
     }
 
 
@@ -186,7 +212,7 @@ def _summarize(rows: list[dict]) -> dict:
     return {"by_kc": summary, "smallest_reliable_negative_kc": bracket}
 
 
-def _plot(save_dir: Path, rows: list[dict], summary: dict) -> None:
+def _plot(save_dir: Path, rows: list[dict], summary: dict, kind: str) -> None:
     fig, ax = plt.subplots(figsize=(6, 4))
     for row in rows:
         series = row.get("first_block_E")
@@ -211,17 +237,21 @@ def _plot(save_dir: Path, rows: list[dict], summary: dict) -> None:
         yerr.append(item["lambda_std"])
     ax.errorbar(xs, ys, yerr=yerr, marker="o", ls="none")
     ax.axhline(0.0, color="0.4", lw=1)
-    ax.set_xlabel("cutoff kc (0 = unclamped)")
+    if kind == "pool":
+        ax.set_xlabel("pooling factor r (nominal kc = 128/r)")
+        plot_name = "lambda_c_vs_factor.png"
+    else:
+        ax.set_xlabel("cutoff kc (0 = unclamped)")
+        plot_name = "lambda_c_vs_kc.png"
     ax.set_ylabel("lambda_c")
     ax.set_title("conditional growth rate")
     fig.tight_layout()
-    fig.savefig(save_dir / "lambda_c_vs_kc.png", dpi=140)
+    fig.savefig(save_dir / plot_name, dpi=140)
     plt.close(fig)
 
 
-def _save_segment(path: Path, row: dict, out: dict) -> None:
-    np.savez_compressed(
-        path,
+def _save_segment(path: Path, row: dict, out: dict, final_fine: np.ndarray | None) -> None:
+    payload = dict(
         kc=np.asarray(row["kc"]),
         segment=np.asarray(row["segment"]),
         stem=np.asarray(row["stem"]),
@@ -235,6 +265,9 @@ def _save_segment(path: Path, row: dict, out: dict) -> None:
         underflow=np.asarray(out["underflow"]),
         delta_t_model=np.asarray(row["delta_t_model"]),
     )
+    if final_fine is not None:
+        payload["final_fine_256"] = np.asarray(final_fine, dtype=np.float64)
+    np.savez_compressed(path, **payload)
 
 
 def _row_from_npz(path: Path, segment: int, direction: int, time: float, delta_t_model: float) -> dict:
@@ -270,8 +303,9 @@ def _load_rows(args, dt: float, save_dir: Path) -> list[dict]:
     by_segment = {int(sample["sample"]): sample for sample in windows}
     rows = []
     missing = []
-    for segment, kc, direction in sync_task_keys(args.n_segments, args.kc, args.n_directions):
-        path = save_dir / segment_filename(kc, segment, direction)
+    levels, kind = screen_levels(args)
+    for segment, level, direction in sync_task_keys(args.n_segments, levels, args.n_directions):
+        path = save_dir / segment_filename(level, segment, direction, kind)
         if not path.is_file():
             missing.append(path.name)
             continue
@@ -290,12 +324,17 @@ def _load_rows(args, dt: float, save_dir: Path) -> list[dict]:
 def _finalize(args, dt: float, save_dir: Path) -> dict:
     rows = _load_rows(args, dt, save_dir)
     summary = _summarize(rows)
+    _levels, kind = screen_levels(args)
     write_json(
         save_dir / "summary.json",
         {
             "summary": summary,
             "cutoff_shape": args.cutoff_shape,
-            "inequality": "kc=0 is unclamped; otherwise |k_i| < kc (strict) in integer cycles per domain",
+            "inequality": (
+                "pooling shares avg_pool(truncate(solver->model), r); nominal kc=128/r is a label only"
+                if kind == "pool"
+                else "kc=0 is unclamped; otherwise |k_i| < kc (strict) in integer cycles per domain"
+            ),
             "renormalization": "both AB2 levels scaled so the current fine difference has RMS eps",
             "n_gpus": args.n_gpus,
             "rows": [
@@ -304,7 +343,7 @@ def _finalize(args, dt: float, save_dir: Path) -> dict:
             ],
         },
     )
-    _plot(save_dir, rows, summary)
+    _plot(save_dir, rows, summary, kind)
     _write_meta(args, save_dir, dt, summary)
     print(json_summary(summary), flush=True)
     return summary
@@ -339,9 +378,10 @@ def execute(args, dt: float, save_dir: Path, *, summarize: bool) -> dict | None:
     solver = _make_solver(args, dt)
     windows = sample_windows(args.eval_dir, args.every_nth_field, args.n_segments, 0, args.seed)
     by_segment = {int(sample["sample"]): sample for sample in windows}
+    levels, kind = screen_levels(args)
     owned = [
         key
-        for index, key in enumerate(sync_task_keys(args.n_segments, args.kc, args.n_directions))
+        for index, key in enumerate(sync_task_keys(args.n_segments, levels, args.n_directions))
         if args.n_gpus <= 1 or index % args.n_gpus == args.gpu_rank
     ]
     print(
@@ -349,8 +389,8 @@ def execute(args, dt: float, save_dir: Path, *, summarize: bool) -> dict | None:
         flush=True,
     )
     loaded = {}
-    for segment, kc, direction in owned:
-        path = save_dir / segment_filename(kc, segment, direction)
+    for segment, level, direction in owned:
+        path = save_dir / segment_filename(level, segment, direction, kind)
         if args.skip_existing and path.is_file():
             print(f"[sync] skip {path.name}", flush=True)
             continue
@@ -359,14 +399,14 @@ def execute(args, dt: float, save_dir: Path, *, summarize: bool) -> dict | None:
         if stem not in loaded:
             loaded[stem] = load_omega(DNS_DATA / f"{stem}.mat")
         omega, time = loaded[stem]
-        projector = _projector(solver, kc, args.cutoff_shape)
-        rng = np.random.default_rng(args.seed + 1000 * segment + 10 * kc + direction)
+        projector = _projector(solver, level, args.cutoff_shape, args.nx_model)
+        rng = np.random.default_rng(args.seed + 1000 * segment + 10 * level + direction)
         out = run_segment(
             solver, omega, args.eps, args.tau, args.T,
             args.burn_in_blocks, projector, rng,
         )
         row = {
-            "kc": int(kc),
+            "kc": int(level),
             "segment": segment,
             "stem": stem,
             "time": time,
@@ -374,12 +414,17 @@ def execute(args, dt: float, save_dir: Path, *, summarize: bool) -> dict | None:
             "dt_dns": dt,
             "delta_t_model": args.delta_t_model,
         }
+        final_fine = None
+        if kind == "pool" and projector is not None:
+            final_fine = _final_fine_256(
+                solver, out["ref"], out["fol"], projector, int(level), args.nx_model
+            )
         print(
-            f"[sync] kc={kc} stem={stem} dir={direction} "
+            f"[sync] {kind}={level} stem={stem} dir={direction} "
             f"lambda={out['lambda_c']:.4g} coarse_pert={out['coarse_rms_of_perturbation']:.2e}",
             flush=True,
         )
-        _save_segment(path, row, out)
+        _save_segment(path, row, out, final_fine)
     if not summarize:
         return None
     return _finalize(args, dt, save_dir)

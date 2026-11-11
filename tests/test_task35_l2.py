@@ -226,6 +226,42 @@ def test_task5_partitions_cover_every_case():
     assert abs(row["step_factor"] - np.exp(-0.3 * 0.05)) < 1e-12
 
 
+def test_bands_partition_and_pooling_fine_part():
+    from coarse_projectors import PoolingProjector, apply_band, band_real_dof, radial_band_masks
+    from task5_sync_screen import screen_levels, segment_filename
+
+    masks = radial_band_masks(32)
+    covered = np.zeros(masks[0][1].shape, dtype=np.int32)
+    for _label, mask in masks:
+        covered += mask.astype(np.int32)
+    assert np.all(covered == 1)
+    assert sum(band_real_dof(mask) for _label, mask in masks) == 32 * 32
+    field = np.random.default_rng(0).standard_normal((32, 32))
+    limited = apply_band(field, masks[2][1])
+    hat = np.fft.rfft2(limited)
+    assert np.max(np.abs(hat[~masks[2][1]])) < 1e-8
+
+    class _Args:
+        cutoff_shape = "pooling"
+        pool_factors = [2, 4, 8, 16, 32]
+        kc = [0, 4]
+
+    levels, kind = screen_levels(_Args())
+    assert levels == [2, 4, 8, 16, 32] and kind == "pool"
+    assert segment_filename(8, 0, 1, "pool") == "pool8_seg0_dir1.npz"
+    assert segment_filename(8, 0, 1) == "kc8_seg0_dir1.npz"
+
+    solver_side = 32
+    projector = PoolingProjector(solver_side, solver_side, 8)
+    hat_in = projector.jnp.fft.rfft2(
+        projector.jnp.asarray(np.random.default_rng(1).standard_normal((solver_side, solver_side)))
+    )
+    fine = np.array(projector.Q_phys_hat(hat_in))
+    coarse = np.array(projector.D_phys(projector.jnp.asarray(fine)))
+    assert rms(coarse) < 1e-8
+    assert rms(fine) > 1e-3
+
+
 if __name__ == "__main__":
     test_toy_roots()
     test_steps_for_and_fd()
@@ -235,4 +271,5 @@ if __name__ == "__main__":
     test_continuous_clamp_differs_from_endpoint()
     test_model_jvp_norm_cancels()
     test_task5_partitions_cover_every_case()
+    test_bands_partition_and_pooling_fine_part()
     print("ok")

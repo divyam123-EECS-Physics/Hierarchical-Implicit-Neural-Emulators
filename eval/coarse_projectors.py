@@ -182,3 +182,41 @@ def q_model(field: np.ndarray, factor: int) -> np.ndarray:
 def p_model(field: np.ndarray, factor: int) -> np.ndarray:
     coarse = pool_avg(field, factor)
     return np.repeat(np.repeat(coarse, factor, axis=0), factor, axis=1)
+
+
+# Radial shells on the integer-wavenumber grid. The last shell is every
+# mode with |k| >= 64, including the corners past the axis Nyquist.
+BAND_EDGES = (4, 8, 16, 32, 64)
+
+
+def radial_band_masks(n: int) -> list[tuple[str, np.ndarray]]:
+    """Partition of the rfft2 grid. Each entry is (label, boolean mask)."""
+    kx = np.fft.fftfreq(n, d=1.0 / n)
+    ky = np.fft.rfftfreq(n, d=1.0 / n)
+    kxx, kyy = np.meshgrid(kx, ky, indexing="ij")
+    radius = np.sqrt(kxx ** 2 + kyy ** 2)
+    masks = []
+    lower = 0.0
+    for edge in BAND_EDGES:
+        masks.append((f"[{lower:g},{edge:g})", (radius >= lower) & (radius < edge)))
+        lower = float(edge)
+    masks.append((f"[{lower:g},max]", radius >= lower))
+    return masks
+
+
+def band_real_dof(mask: np.ndarray) -> int:
+    """Real dimension of one rfft mask. ky=0 and Nyquist bins are real."""
+    weight = np.full(mask.shape, 2.0, dtype=np.float64)
+    weight[:, 0] = 1.0
+    if mask.shape[0] % 2 == 0:
+        weight[:, -1] = 1.0
+    return int(np.round(np.sum(np.asarray(mask, dtype=np.float64) * weight)))
+
+
+def apply_band(field: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Orthogonal Fourier projector onto one shell, in physical space."""
+    physical = np.asarray(field, dtype=np.float64)
+    hat = np.fft.rfft2(physical)
+    if hat.shape != mask.shape:
+        raise ValueError(f"mask {mask.shape} does not match rfft {hat.shape}")
+    return np.fft.irfft2(hat * mask, s=physical.shape)

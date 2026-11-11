@@ -1,114 +1,0 @@
-/var/spool/slurmd/job60799103/slurm_script: line 24: netstat: command not found
-MASTER_ADDR=127.0.0.1 MASTER_PORT=64929
-| distributed init (rank 0): env://, gpu 0
-/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
-  return func(*args, **kwargs)
-[rank0]:[W1104 05:12:22.341920465 ProcessGroupNCCL.cpp:5310] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
-[05:12:22.770079] job dir: /global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
-[05:12:22.770826] Namespace(ablation='l1_aux',
-train_unroll=1,
-aux_levels=2,
-aux_loss_weight=1.0,
-ds_factors=[8,
-32],
-img_size=256,
-num_of_frame=4,
-batch_size=8,
-epochs=1,
-eval_freq=1,
-save_last_freq=1,
-evaluate=False,
-weight_decay=0.05,
-lr=0.0003,
-blr=0.0001,
-min_lr=0.0,
-lr_schedule='constant',
-warmup_epochs=10,
-acc_grad=1,
-ema_rate=0.9995,
-data_path='./data/imagenet',
-output_dir='output/output_debug_ablation_l1_aux',
-log_dir='output/output_debug_ablation_l1_aux',
-device='cuda',
-seed=1,
-resume='output/output_debug_ablation_l1_aux',
-resume_epoch=0,
-start_epoch=0,
-num_workers=4,
-pin_mem=True,
-world_size=1,
-local_rank=-1,
-dist_on_itp=False,
-dist_url='env://',
-rank=0,
-gpu=0,
-distributed=True,
-dist_backend='nccl')
-[05:12:22.933585] 16204
-  0%|          | 0/64 [00:00<?, ?it/s]  2%|▏         | 1/64 [00:00<00:30,  2.10it/s]  3%|▎         | 2/64 [00:00<00:26,  2.37it/s]  5%|▍         | 3/64 [00:01<00:25,  2.44it/s]  6%|▋         | 4/64 [00:01<00:23,  2.51it/s]  8%|▊         | 5/64 [00:02<00:23,  2.51it/s]  9%|▉         | 6/64 [00:02<00:23,  2.46it/s] 11%|█         | 7/64 [00:02<00:23,  2.48it/s] 12%|█▎        | 8/64 [00:03<00:22,  2.51it/s] 14%|█▍        | 9/64 [00:03<00:21,  2.52it/s] 16%|█▌        | 10/64 [00:04<00:21,  2.53it/s] 17%|█▋        | 11/64 [00:04<00:21,  2.49it/s] 19%|█▉        | 12/64 [00:04<00:20,  2.48it/s] 20%|██        | 13/64 [00:05<00:20,  2.45it/s] 22%|██▏       | 14/64 [00:05<00:20,  2.45it/s] 23%|██▎       | 15/64 [00:06<00:20,  2.43it/s] 23%|██▎       | 15/64 [00:06<00:21,  2.30it/s]
-[05:12:29.481343] 121
-  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  5.13it/s]100%|██████████| 1/1 [00:00<00:00,  5.11it/s]
-[05:12:29.683368] train dataset 4093
-[05:12:29.684533] validation dataset 118
-[05:12:29.685592] ablation=l1_aux frames=4 unroll=1 aux_levels=2 ds_factors=[8, 32]
-[05:12:30.091863] Number of trainable parameters: 36.394886M
-[05:12:30.153147] actual lr: 3.00e-04
-[05:12:30.153764] effective batch size: 8
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/misc.py:251: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
-  self._scaler = torch.cuda.amp.GradScaler()
-[05:12:35.117966] Training from scratch
-[05:12:35.118899] Start training for 1 epochs
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py:85: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-[05:13:00.180498] Epoch: [0]  [  0/511]  eta: 3:33:22  lr: 0.000000  loss: 5.5927 (5.5927)  high_loss: 1.7513 (1.7513)  aux0_loss: 2.6402 (2.6402)  aux1_loss: 1.2011 (1.2011)  grad_norm: inf (inf)  time: 25.0535  data: 0.1955  max mem: 6789
-[05:13:02.552655] Epoch: [0]  [ 12/511]  eta: 0:17:32  lr: 0.000001  loss: 5.4381 (5.3462)  high_loss: 1.7134 (1.7180)  aux0_loss: 2.5426 (2.5071)  aux1_loss: 1.1603 (1.1211)  grad_norm: 230.7713 (inf)  time: 2.1094  data: 0.0151  max mem: 6789
-[05:13:04.702225] Epoch: [0]  [ 24/511]  eta: 0:09:36  lr: 0.000001  loss: 4.5603 (4.8020)  high_loss: 1.7059 (1.7141)  aux0_loss: 2.0804 (2.1732)  aux1_loss: 0.7681 (0.9146)  grad_norm: 232.8766 (inf)  time: 0.1787  data: 0.0001  max mem: 6789
-[05:13:06.852169] Epoch: [0]  [ 36/511]  eta: 0:06:47  lr: 0.000002  loss: 3.3057 (4.2202)  high_loss: 1.6941 (1.7053)  aux0_loss: 1.0718 (1.7510)  aux1_loss: 0.5391 (0.7639)  grad_norm: 258.4749 (inf)  time: 0.1790  data: 0.0001  max mem: 6789
-[05:13:08.998034] Epoch: [0]  [ 48/511]  eta: 0:05:19  lr: 0.000003  loss: 2.7712 (3.8623)  high_loss: 1.6662 (1.6916)  aux0_loss: 0.7399 (1.5098)  aux1_loss: 0.3602 (0.6608)  grad_norm: 237.9005 (inf)  time: 0.1786  data: 0.0001  max mem: 6789
-[05:13:11.151355] Epoch: [0]  [ 60/511]  eta: 0:04:26  lr: 0.000004  loss: 2.7340 (3.6281)  high_loss: 1.6264 (1.6745)  aux0_loss: 0.7698 (1.3583)  aux1_loss: 0.3340 (0.5953)  grad_norm: 254.8589 (inf)  time: 0.1790  data: 0.0001  max mem: 6789
-[05:13:13.306196] Epoch: [0]  [ 72/511]  eta: 0:03:49  lr: 0.000004  loss: 2.4347 (3.4224)  high_loss: 1.5646 (1.6516)  aux0_loss: 0.6038 (1.2295)  aux1_loss: 0.2758 (0.5412)  grad_norm: 181.2619 (inf)  time: 0.1793  data: 0.0001  max mem: 6789
-[05:13:15.460269] Epoch: [0]  [ 84/511]  eta: 0:03:22  lr: 0.000005  loss: 2.3113 (3.2621)  high_loss: 1.4719 (1.6251)  aux0_loss: 0.5448 (1.1333)  aux1_loss: 0.2740 (0.5036)  grad_norm: 184.4542 (inf)  time: 0.1792  data: 0.0001  max mem: 6789
-[05:13:17.609318] Epoch: [0]  [ 96/511]  eta: 0:03:01  lr: 0.000006  loss: 2.1648 (3.1236)  high_loss: 1.4048 (1.5961)  aux0_loss: 0.5288 (1.0570)  aux1_loss: 0.2421 (0.4705)  grad_norm: 104.7331 (inf)  time: 0.1789  data: 0.0001  max mem: 6789
-[05:13:19.761545] Epoch: [0]  [108/511]  eta: 0:02:44  lr: 0.000006  loss: 2.0360 (3.0007)  high_loss: 1.3279 (1.5626)  aux0_loss: 0.4989 (0.9944)  aux1_loss: 0.2264 (0.4437)  grad_norm: 104.6710 (inf)  time: 0.1787  data: 0.0001  max mem: 6789
-[05:13:21.909610] Epoch: [0]  [120/511]  eta: 0:02:31  lr: 0.000007  loss: 1.8891 (2.8878)  high_loss: 1.2212 (1.5263)  aux0_loss: 0.4663 (0.9410)  aux1_loss: 0.2170 (0.4206)  grad_norm: 105.6138 (inf)  time: 0.1791  data: 0.0001  max mem: 6789
-[05:13:24.070021] Epoch: [0]  [132/511]  eta: 0:02:19  lr: 0.000008  loss: 1.7300 (2.7798)  high_loss: 1.1151 (1.4864)  aux0_loss: 0.4245 (0.8932)  aux1_loss: 0.1954 (0.4002)  grad_norm: 55.9555 (inf)  time: 0.1795  data: 0.0001  max mem: 6789
-[05:13:26.225986] Epoch: [0]  [144/511]  eta: 0:02:09  lr: 0.000008  loss: 1.6165 (2.6816)  high_loss: 1.0098 (1.4451)  aux0_loss: 0.4119 (0.8541)  aux1_loss: 0.1882 (0.3824)  grad_norm: 66.0183 (inf)  time: 0.1797  data: 0.0001  max mem: 6789
-[05:13:28.379161] Epoch: [0]  [156/511]  eta: 0:02:00  lr: 0.000009  loss: 1.5048 (2.5884)  high_loss: 0.9154 (1.4033)  aux0_loss: 0.4040 (0.8188)  aux1_loss: 0.1795 (0.3663)  grad_norm: 63.8273 (inf)  time: 0.1792  data: 0.0001  max mem: 6789
-[05:13:30.557274] Epoch: [0]  [168/511]  eta: 0:01:52  lr: 0.000010  loss: 1.3573 (2.5002)  high_loss: 0.8312 (1.3617)  aux0_loss: 0.3736 (0.7867)  aux1_loss: 0.1631 (0.3518)  grad_norm: 42.8490 (inf)  time: 0.1806  data: 0.0001  max mem: 6789
-[05:13:32.731417] Epoch: [0]  [180/511]  eta: 0:01:45  lr: 0.000011  loss: 1.2646 (2.4166)  high_loss: 0.7572 (1.3205)  aux0_loss: 0.3529 (0.7576)  aux1_loss: 0.1523 (0.3385)  grad_norm: 45.9137 (inf)  time: 0.1813  data: 0.0001  max mem: 6789
-[05:13:34.903010] Epoch: [0]  [192/511]  eta: 0:01:38  lr: 0.000011  loss: 1.1914 (2.3390)  high_loss: 0.7015 (1.2810)  aux0_loss: 0.3420 (0.7316)  aux1_loss: 0.1458 (0.3264)  grad_norm: 48.5466 (inf)  time: 0.1808  data: 0.0001  max mem: 6789
-[05:13:37.074225] Epoch: [0]  [204/511]  eta: 0:01:32  lr: 0.000012  loss: 1.1132 (2.2665)  high_loss: 0.6510 (1.2435)  aux0_loss: 0.3226 (0.7074)  aux1_loss: 0.1431 (0.3156)  grad_norm: 32.3598 (inf)  time: 0.1809  data: 0.0001  max mem: 6789
-[05:13:39.236008] Epoch: [0]  [216/511]  eta: 0:01:27  lr: 0.000013  loss: 1.0689 (2.1989)  high_loss: 0.6103 (1.2074)  aux0_loss: 0.3174 (0.6858)  aux1_loss: 0.1362 (0.3057)  grad_norm: 32.3931 (inf)  time: 0.1803  data: 0.0001  max mem: 6789
-[05:13:41.398032] Epoch: [0]  [228/511]  eta: 0:01:21  lr: 0.000013  loss: 1.0064 (2.1359)  high_loss: 0.5673 (1.1734)  aux0_loss: 0.3108 (0.6660)  aux1_loss: 0.1306 (0.2965)  grad_norm: 31.2832 (inf)  time: 0.1800  data: 0.0001  max mem: 6789
-[05:13:43.559264] Epoch: [0]  [240/511]  eta: 0:01:16  lr: 0.000014  loss: 0.9546 (2.0758)  high_loss: 0.5307 (1.1405)  aux0_loss: 0.3009 (0.6473)  aux1_loss: 0.1274 (0.2880)  grad_norm: 26.8713 (inf)  time: 0.1800  data: 0.0001  max mem: 6789
-[05:13:45.713456] Epoch: [0]  [252/511]  eta: 0:01:12  lr: 0.000015  loss: 0.8772 (2.0183)  high_loss: 0.4809 (1.1089)  aux0_loss: 0.2768 (0.6296)  aux1_loss: 0.1190 (0.2798)  grad_norm: 24.6734 (inf)  time: 0.1795  data: 0.0001  max mem: 6789
-[05:13:47.863533] Epoch: [0]  [264/511]  eta: 0:01:07  lr: 0.000015  loss: 0.8446 (1.9654)  high_loss: 0.4577 (1.0797)  aux0_loss: 0.2682 (0.6133)  aux1_loss: 0.1176 (0.2724)  grad_norm: 23.6993 (inf)  time: 0.1792  data: 0.0001  max mem: 6789
-[05:13:50.013922] Epoch: [0]  [276/511]  eta: 0:01:03  lr: 0.000016  loss: 0.8286 (1.9157)  high_loss: 0.4530 (1.0524)  aux0_loss: 0.2622 (0.5979)  aux1_loss: 0.1135 (0.2654)  grad_norm: 22.2370 (inf)  time: 0.1790  data: 0.0001  max mem: 6789
-[05:13:52.172226] Epoch: [0]  [288/511]  eta: 0:00:59  lr: 0.000017  loss: 0.8059 (1.8696)  high_loss: 0.4465 (1.0273)  aux0_loss: 0.2547 (0.5836)  aux1_loss: 0.1063 (0.2588)  grad_norm: 19.8447 (inf)  time: 0.1795  data: 0.0001  max mem: 6789
-[05:13:54.326701] Epoch: [0]  [300/511]  eta: 0:00:55  lr: 0.000018  loss: 0.7966 (1.8266)  high_loss: 0.4427 (1.0038)  aux0_loss: 0.2521 (0.5702)  aux1_loss: 0.1050 (0.2526)  grad_norm: 19.3905 (inf)  time: 0.1794  data: 0.0001  max mem: 6789
-[05:13:56.483009] Epoch: [0]  [312/511]  eta: 0:00:51  lr: 0.000018  loss: 0.7824 (1.7863)  high_loss: 0.4357 (0.9819)  aux0_loss: 0.2419 (0.5576)  aux1_loss: 0.1034 (0.2468)  grad_norm: 18.6144 (inf)  time: 0.1795  data: 0.0001  max mem: 6789
-[05:13:58.639620] Epoch: [0]  [324/511]  eta: 0:00:48  lr: 0.000019  loss: 0.7528 (1.7480)  high_loss: 0.4205 (0.9610)  aux0_loss: 0.2325 (0.5455)  aux1_loss: 0.1021 (0.2414)  grad_norm: 17.9903 (inf)  time: 0.1793  data: 0.0001  max mem: 6789
-[05:14:00.807342] Epoch: [0]  [336/511]  eta: 0:00:44  lr: 0.000020  loss: 0.7301 (1.7114)  high_loss: 0.4064 (0.9412)  aux0_loss: 0.2239 (0.5340)  aux1_loss: 0.0960 (0.2362)  grad_norm: 17.5526 (inf)  time: 0.1802  data: 0.0001  max mem: 6789
-[05:14:02.966001] Epoch: [0]  [348/511]  eta: 0:00:40  lr: 0.000020  loss: 0.7151 (1.6768)  high_loss: 0.4045 (0.9225)  aux0_loss: 0.2192 (0.5231)  aux1_loss: 0.0922 (0.2312)  grad_norm: 16.9535 (inf)  time: 0.1801  data: 0.0001  max mem: 6789
-[05:14:05.122291] Epoch: [0]  [360/511]  eta: 0:00:37  lr: 0.000021  loss: 0.6994 (1.6440)  high_loss: 0.3907 (0.9047)  aux0_loss: 0.2163 (0.5128)  aux1_loss: 0.0903 (0.2265)  grad_norm: 16.1553 (inf)  time: 0.1796  data: 0.0001  max mem: 6789
-[05:14:07.288502] Epoch: [0]  [372/511]  eta: 0:00:34  lr: 0.000022  loss: 0.6759 (1.6126)  high_loss: 0.3792 (0.8877)  aux0_loss: 0.2106 (0.5030)  aux1_loss: 0.0881 (0.2220)  grad_norm: 15.2388 (inf)  time: 0.1801  data: 0.0001  max mem: 6789
-[05:14:09.461989] Epoch: [0]  [384/511]  eta: 0:00:31  lr: 0.000023  loss: 0.6534 (1.5826)  high_loss: 0.3650 (0.8714)  aux0_loss: 0.2006 (0.4935)  aux1_loss: 0.0831 (0.2177)  grad_norm: 14.5461 (inf)  time: 0.1808  data: 0.0001  max mem: 6789
-[05:14:11.628518] Epoch: [0]  [396/511]  eta: 0:00:27  lr: 0.000023  loss: 0.6456 (1.5541)  high_loss: 0.3641 (0.8561)  aux0_loss: 0.1966 (0.4846)  aux1_loss: 0.0798 (0.2135)  grad_norm: 14.5222 (inf)  time: 0.1806  data: 0.0001  max mem: 6789
-[05:14:13.790113] Epoch: [0]  [408/511]  eta: 0:00:24  lr: 0.000024  loss: 0.6370 (1.5271)  high_loss: 0.3611 (0.8415)  aux0_loss: 0.1955 (0.4761)  aux1_loss: 0.0790 (0.2096)  grad_norm: 14.1575 (inf)  time: 0.1801  data: 0.0001  max mem: 6789
-[05:14:15.940396] Epoch: [0]  [420/511]  eta: 0:00:21  lr: 0.000025  loss: 0.6209 (1.5012)  high_loss: 0.3519 (0.8275)  aux0_loss: 0.1908 (0.4679)  aux1_loss: 0.0778 (0.2058)  grad_norm: 13.8291 (inf)  time: 0.1791  data: 0.0001  max mem: 6789
-[05:14:18.104743] Epoch: [0]  [432/511]  eta: 0:00:18  lr: 0.000025  loss: 0.6024 (1.4763)  high_loss: 0.3457 (0.8141)  aux0_loss: 0.1824 (0.4599)  aux1_loss: 0.0769 (0.2023)  grad_norm: 13.2612 (inf)  time: 0.1796  data: 0.0001  max mem: 6789
-[05:14:20.271620] Epoch: [0]  [444/511]  eta: 0:00:15  lr: 0.000026  loss: 0.5877 (1.4524)  high_loss: 0.3394 (0.8013)  aux0_loss: 0.1768 (0.4523)  aux1_loss: 0.0751 (0.1988)  grad_norm: 13.6361 (inf)  time: 0.1803  data: 0.0001  max mem: 6789
-[05:14:22.433815] Epoch: [0]  [456/511]  eta: 0:00:12  lr: 0.000027  loss: 0.5822 (1.4295)  high_loss: 0.3344 (0.7890)  aux0_loss: 0.1767 (0.4450)  aux1_loss: 0.0712 (0.1954)  grad_norm: 13.9538 (inf)  time: 0.1801  data: 0.0001  max mem: 6789
-[05:14:24.593901] Epoch: [0]  [468/511]  eta: 0:00:10  lr: 0.000027  loss: 0.5718 (1.4074)  high_loss: 0.3310 (0.7772)  aux0_loss: 0.1714 (0.4380)  aux1_loss: 0.0691 (0.1922)  grad_norm: 13.6379 (inf)  time: 0.1799  data: 0.0001  max mem: 6789
-[05:14:26.766402] Epoch: [0]  [480/511]  eta: 0:00:07  lr: 0.000028  loss: 0.5620 (1.3864)  high_loss: 0.3267 (0.7660)  aux0_loss: 0.1690 (0.4312)  aux1_loss: 0.0677 (0.1891)  grad_norm: 13.2206 (inf)  time: 0.1804  data: 0.0001  max mem: 6789
-[05:14:28.931713] Epoch: [0]  [492/511]  eta: 0:00:04  lr: 0.000029  loss: 0.5540 (1.3659)  high_loss: 0.3227 (0.7551)  aux0_loss: 0.1637 (0.4247)  aux1_loss: 0.0661 (0.1861)  grad_norm: 12.4381 (inf)  time: 0.1806  data: 0.0001  max mem: 6789
-[05:14:31.094256] Epoch: [0]  [504/511]  eta: 0:00:01  lr: 0.000030  loss: 0.5304 (1.3460)  high_loss: 0.3117 (0.7445)  aux0_loss: 0.1567 (0.4183)  aux1_loss: 0.0640 (0.1832)  grad_norm: 12.6969 (inf)  time: 0.1800  data: 0.0001  max mem: 6789
-[05:14:32.152202] Epoch: [0]  [510/511]  eta: 0:00:00  lr: 0.000030  loss: 0.5264 (1.3365)  high_loss: 0.3092 (0.7394)  aux0_loss: 0.1570 (0.4152)  aux1_loss: 0.0644 (0.1818)  grad_norm: 13.0668 (inf)  time: 0.1788  data: 0.0001  max mem: 6789
-[05:14:32.233157] Epoch: [0] Total time: 0:01:57 (0.2292 s / it)
-/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
-  return func(*args, **kwargs)
-[05:14:32.236076] Averaged stats: lr: 0.000030  loss: 0.5264 (1.3365)  high_loss: 0.3092 (0.7394)  aux0_loss: 0.1570 (0.4152)  aux1_loss: 0.0644 (0.1818)  grad_norm: 13.0668 (inf)
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_ablation.py:34: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-[05:14:38.728324] Training time 0:02:03
-ABLATION_L1_AUX_DEBUG_DONE

@@ -59,7 +59,7 @@ not use that physical epsilon and stores `not_applicable`, not true.
 - `roll_rho_norm`: `||e_n - sum_{i<n} eps_u||`. Not the same as `R_n`.
 - `roll_rH_norm`, `roll_rZ_norm`: truncated first-factor channels. A large residual is not automatically a bug.
 - `roll_recon_norm`: `||rho - r_H - r_z||`.
-- `roll_cos_rH_rZ`: alignment. Undefined when either channel is zero; plotted on its own panel with limits `[-1, 1]`.
+- `roll_cos_*`: cosine alignment, the same quantity as `cos(r_H, r_z)`. Undefined when either vector is zero; plotted with limits `[-1, 1]`. Fine pairs are among `r_H`, `r_z`, `e`, `rho`, and the accumulated injection `sum_{i<n} eps_u`. Latent pairs are `eta_n` with the accumulated latent injection `Z_n = sum_{i<n} xi_i`, and `eta_n` with `eta_lin,n`.
 - `roll_e_lin_norm`, `roll_eta_lin_norm`: full linearized errors. No physical tangent.
 - `roll_e_lin_err`, `roll_eta_lin_err`: `||e - e_lin||` and `||eta - eta_lin||`, vector differences.
 - `roll_recon_lin_norm`: `||rho_lin - r_H - r_z||`.

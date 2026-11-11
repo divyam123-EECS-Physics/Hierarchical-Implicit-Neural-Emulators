@@ -35,7 +35,7 @@ from l2_fd_jvp import (
 from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS, plot_validation_flags, run_succeeded
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth, rho_S
 from l2_physical_jvp import ProxyTangent, Py2DFDTangent, validate_physical_reference
-from l2_retention import propagate_augmented, relative_residual, running_channels, validation_directions
+from l2_retention import _cos, propagate_augmented, relative_residual, running_channels, validation_directions
 from main_plus import finalize_args
 from model_plus import FutureINNPlus
 import argparse
@@ -223,6 +223,21 @@ def test_retention_bookkeeping():
     assert abs(out["recon_norm"][3] - float((rho - rH - rZ).norm())) < 1e-5
     # R is not ||rho||.
     assert abs(out["R"][3] - out["rho_norm"][3]) > 1e-4
+    injected = sum(eu, torch.zeros_like(eu[0]))
+    assert abs(out["cos_e_rho"][3] - _cos(e[3], rho)) < 1e-6
+    assert abs(out["cos_e_inj"][3] - _cos(e[3], injected)) < 1e-6
+    assert abs(out["cos_rho_inj"][3] - _cos(rho, injected)) < 1e-6
+    assert np.isnan(out["cos_e_rho"][0])
+    eta = [torch.zeros(1, 1, 2, 2)]
+    acc_z = torch.zeros(1, 1, 2, 2)
+    for k in range(3):
+        acc_z = acc_z + xi[k]
+        eta.append(acc_z + torch.ones_like(acc_z))
+    eta_lin = [torch.full_like(item, 0.5) for item in eta]
+    with_eta = running_channels(e, eu, xi, Jminus, Bop, eta=eta, eta_lin=eta_lin)
+    assert abs(with_eta["cos_eta_inj"][3] - _cos(eta[3], acc_z)) < 1e-6
+    assert abs(with_eta["cos_eta_eta_lin"][3] - _cos(eta[3], eta_lin[3])) < 1e-6
+    assert np.isnan(with_eta["cos_eta_inj"][0])
 
 
 def test_large_eps_on_cubic():

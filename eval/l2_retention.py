@@ -38,6 +38,24 @@ def relative_residual(numer: np.ndarray, denom: np.ndarray, floor: float = FD_OU
     return rel
 
 
+_FINE_COS = (
+    "cos_rH_rZ",
+    "cos_e_rho",
+    "cos_e_rH",
+    "cos_e_rZ",
+    "cos_rho_rH",
+    "cos_rho_rZ",
+    "cos_e_inj",
+    "cos_rho_inj",
+    "cos_rH_inj",
+    "cos_rZ_inj",
+)
+_LATENT_COS = (
+    "cos_eta_inj",
+    "cos_eta_eta_lin",
+)
+
+
 def running_channels(
     e: list[torch.Tensor],
     eps_u: list[torch.Tensor],
@@ -45,6 +63,8 @@ def running_channels(
     apply_J_minus_I,
     apply_B,
     e_lin: list[torch.Tensor] | None = None,
+    eta: list[torch.Tensor] | None = None,
+    eta_lin: list[torch.Tensor] | None = None,
 ) -> dict[str, np.ndarray]:
     """First-factor sums. e[0] is the initial fine error (zero on a fresh start).
 
@@ -52,12 +72,19 @@ def running_channels(
     apply_J_minus_I(k, vec) and apply_B(k, vec) act at step k, on injections
     accumulated before step k. r_H and r_z are a truncated approximation.
     If e_lin is given, also records ||rho_lin - r_H - r_z||.
+    Cosines use the same vectors as the norms. S is the accumulated fine
+    injection sum_{i<n} eps_u. Z is the accumulated latent injection.
+    A zero vector leaves that cosine undefined (NaN).
     """
     t = len(eps_u)
     if len(e) != t + 1 or len(xi) != t:
         raise ValueError(f"length mismatch e={len(e)} eps={t} xi={len(xi)}")
     if e_lin is not None and len(e_lin) != t + 1:
         raise ValueError(f"e_lin length {len(e_lin)} != {t + 1}")
+    if eta is not None and len(eta) != t + 1:
+        raise ValueError(f"eta length {len(eta)} != {t + 1}")
+    if eta_lin is not None and len(eta_lin) != t + 1:
+        raise ValueError(f"eta_lin length {len(eta_lin)} != {t + 1}")
     S = torch.zeros_like(e[0])
     Z = torch.zeros_like(xi[0])
     rH = torch.zeros_like(e[0])
@@ -69,7 +96,7 @@ def running_channels(
     rZ_n = np.zeros(t + 1)
     resid = np.zeros(t + 1)
     lin_resid = np.full(t + 1, np.nan)
-    align = np.full(t + 1, np.nan)
+    cos = {name: np.full(t + 1, np.nan) for name in (*_FINE_COS, *_LATENT_COS)}
     e_n = np.zeros(t + 1)
     for n in range(t + 1):
         rho = e[n] - S
@@ -82,7 +109,20 @@ def running_channels(
         resid[n] = _norm(rho - rH - rZ)
         if e_lin is not None:
             lin_resid[n] = _norm(e_lin[n] - S - rH - rZ)
-        align[n] = _cos(rH, rZ)
+        cos["cos_rH_rZ"][n] = _cos(rH, rZ)
+        cos["cos_e_rho"][n] = _cos(e[n], rho)
+        cos["cos_e_rH"][n] = _cos(e[n], rH)
+        cos["cos_e_rZ"][n] = _cos(e[n], rZ)
+        cos["cos_rho_rH"][n] = _cos(rho, rH)
+        cos["cos_rho_rZ"][n] = _cos(rho, rZ)
+        cos["cos_e_inj"][n] = _cos(e[n], S)
+        cos["cos_rho_inj"][n] = _cos(rho, S)
+        cos["cos_rH_inj"][n] = _cos(rH, S)
+        cos["cos_rZ_inj"][n] = _cos(rZ, S)
+        if eta is not None:
+            cos["cos_eta_inj"][n] = _cos(eta[n], Z)
+            if eta_lin is not None:
+                cos["cos_eta_eta_lin"][n] = _cos(eta[n], eta_lin[n])
         if n == t:
             break
         rH = rH + apply_J_minus_I(n, S)
@@ -98,7 +138,7 @@ def running_channels(
         "rH_norm": rH_n,
         "rZ_norm": rZ_n,
         "recon_norm": resid,
-        "cos_rH_rZ": align,
+        **cos,
     }
     if e_lin is not None:
         out["recon_lin_norm"] = lin_resid
@@ -293,7 +333,10 @@ def rollout_diagnostics(
     def B_phys(k, w_phys):
         return apply_B(k, w_phys / norm) * norm
 
-    out = running_channels(e_phys, eu_phys, xi_phys, J_phys, B_phys, e_lin=e_lin_phys)
+    out = running_channels(
+        e_phys, eu_phys, xi_phys, J_phys, B_phys,
+        e_lin=e_lin_phys, eta=eta_phys, eta_lin=eta_lin_phys,
+    )
     out["eps_u_norm"] = np.asarray([_norm(t) for t in eu_phys])
     out["eps_z_norm"] = np.asarray([_norm(t * norm) for t in eps_z])
     out["e_lin_norm"] = np.asarray([_norm(t) for t in e_lin_phys])

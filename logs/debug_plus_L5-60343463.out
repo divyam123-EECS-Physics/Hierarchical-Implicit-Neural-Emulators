@@ -1,123 +1,0 @@
-/var/spool/slurmd/job60343463/slurm_script: line 24: netstat: command not found
-MASTER_ADDR=127.0.0.1 MASTER_PORT=49504
-| distributed init (rank 0): env://, gpu 0
-/global/homes/d/divyam/.conda/envs/hine/lib/python3.10/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
-  return func(*args, **kwargs)
-[rank0]:[W1026 17:48:16.334881656 ProcessGroupNCCL.cpp:5310] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
-[17:48:17.356680] job dir: /global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators
-[17:48:17.413761] Namespace(latent_res=[128,
-64,
-32,
-8],
-inject_res=[128,
-64,
-32,
-16],
-ratio=0.85,
-img_size=256,
-num_of_frame=6,
-ds_factor=2,
-ds_factor_low=32,
-batch_size=8,
-epochs=1,
-eval_freq=1,
-save_last_freq=1,
-evaluate=False,
-weight_decay=0.05,
-lr=5e-05,
-blr=0.0001,
-min_lr=0.0,
-lr_schedule='constant',
-warmup_epochs=10,
-acc_grad=1,
-ema_rate=0.9995,
-eval_idx=0,
-data_path='./data/imagenet',
-output_dir='output_debug_plus_L5',
-log_dir='output_debug_plus_L5',
-device='cuda',
-seed=1,
-resume='output_debug_plus_L5',
-resume_epoch=0,
-start_epoch=0,
-num_workers=4,
-pin_mem=True,
-world_size=1,
-local_rank=-1,
-dist_on_itp=False,
-dist_url='env://',
-num_coarse=4,
-hierarchy_L=5,
-rank=0,
-gpu=0,
-distributed=True,
-dist_backend='nccl')
-[17:48:17.631882] 16204
-  0%|          | 0/64 [00:00<?, ?it/s]  2%|▏         | 1/64 [00:00<00:29,  2.15it/s]  3%|▎         | 2/64 [00:00<00:26,  2.33it/s]  5%|▍         | 3/64 [00:01<00:25,  2.38it/s]  6%|▋         | 4/64 [00:01<00:26,  2.25it/s]  8%|▊         | 5/64 [00:02<00:42,  1.38it/s]  9%|▉         | 6/64 [00:03<00:35,  1.64it/s] 11%|█         | 7/64 [00:03<00:30,  1.85it/s] 12%|█▎        | 8/64 [00:04<00:27,  2.06it/s] 14%|█▍        | 9/64 [00:04<00:25,  2.17it/s] 16%|█▌        | 10/64 [00:05<00:35,  1.53it/s] 17%|█▋        | 11/64 [00:06<00:30,  1.72it/s] 19%|█▉        | 12/64 [00:06<00:27,  1.89it/s] 20%|██        | 13/64 [00:06<00:26,  1.95it/s] 22%|██▏       | 14/64 [00:07<00:29,  1.71it/s] 23%|██▎       | 15/64 [00:08<00:26,  1.85it/s] 23%|██▎       | 15/64 [00:08<00:27,  1.76it/s]
-[17:48:26.311236] 121
-  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  5.22it/s]100%|██████████| 1/1 [00:00<00:00,  5.15it/s]
-[17:48:26.574142] 2676
-  0%|          | 0/11 [00:00<?, ?it/s]  9%|▉         | 1/11 [00:00<00:03,  2.55it/s] 18%|█▊        | 2/11 [00:00<00:03,  2.56it/s] 27%|██▋       | 3/11 [00:01<00:03,  2.56it/s] 36%|███▋      | 4/11 [00:01<00:02,  2.52it/s] 45%|████▌     | 5/11 [00:02<00:02,  2.42it/s] 55%|█████▍    | 6/11 [00:02<00:02,  2.39it/s] 64%|██████▎   | 7/11 [00:02<00:01,  2.42it/s] 73%|███████▎  | 8/11 [00:03<00:01,  2.44it/s] 82%|████████▏ | 9/11 [00:03<00:00,  2.45it/s] 91%|█████████ | 10/11 [00:04<00:00,  2.43it/s]100%|██████████| 11/11 [00:04<00:00,  2.90it/s]100%|██████████| 11/11 [00:04<00:00,  2.55it/s]
-[17:48:30.931189] train dataset 4091
-[17:48:30.939348] validation dataset 116
-[17:48:30.980538] test dataset 2671
-[17:48:31.026963] L=5 K=4 latent_res=[128, 64, 32, 8] inject_res=[128, 64, 32, 16] num_of_frame=6
-[17:48:31.490953] Number of trainable parameters: 40.006794M
-[17:48:31.643337] actual lr: 5.00e-05
-[17:48:31.675417] effective batch size: 8
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/util/misc.py:251: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
-  self._scaler = torch.cuda.amp.GradScaler()
-[17:48:31.826608] Training from scratch
-[17:48:31.857206] Start training for 1 epochs
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_plus.py:204: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-[17:49:03.790960] Epoch: [0]  [  0/511]  eta: 4:31:36  lr: 0.000000  loss: 8.3916 (8.3916)  high_loss: 3.0416 (3.0416)  coarse0_loss: 1.5551 (1.5551)  coarse1_loss: 1.5914 (1.5914)  coarse2_loss: 1.4336 (1.4336)  coarse3_loss: 0.7700 (0.7700)  mid_loss: 1.5551 (1.5551)  low_loss: 0.7700 (0.7700)  grad_norm: inf (inf)  time: 31.8919  data: 0.2267  max mem: 7374
-[17:49:06.435354] Epoch: [0]  [ 12/511]  eta: 0:22:02  lr: 0.000000  loss: 10.6035 (10.4105)  high_loss: 4.1082 (3.9475)  coarse0_loss: 1.7805 (1.8064)  coarse1_loss: 2.1755 (2.1169)  coarse2_loss: 1.5699 (1.6057)  coarse3_loss: 0.9796 (0.9340)  mid_loss: 1.7805 (1.8064)  low_loss: 0.9796 (0.9340)  grad_norm: 328.8086 (inf)  time: 2.6509  data: 0.0175  max mem: 7374
-[17:49:08.874066] Epoch: [0]  [ 24/511]  eta: 0:11:58  lr: 0.000000  loss: 10.6035 (10.3825)  high_loss: 4.0714 (3.9485)  coarse0_loss: 1.7570 (1.8015)  coarse1_loss: 2.1581 (2.1366)  coarse2_loss: 1.5651 (1.5639)  coarse3_loss: 0.9624 (0.9319)  mid_loss: 1.7570 (1.8015)  low_loss: 0.9624 (0.9319)  grad_norm: 289.8657 (inf)  time: 0.2073  data: 0.0001  max mem: 7374
-[17:49:11.327085] Epoch: [0]  [ 36/511]  eta: 0:08:24  lr: 0.000000  loss: 10.3851 (10.3149)  high_loss: 4.0714 (3.9367)  coarse0_loss: 1.7759 (1.7850)  coarse1_loss: 2.1207 (2.1229)  coarse2_loss: 1.5353 (1.5512)  coarse3_loss: 0.9105 (0.9192)  mid_loss: 1.7759 (1.7850)  low_loss: 0.9105 (0.9192)  grad_norm: 286.9776 (inf)  time: 0.2009  data: 0.0001  max mem: 7374
-[17:49:13.784744] Epoch: [0]  [ 48/511]  eta: 0:06:34  lr: 0.000000  loss: 9.4501 (10.0241)  high_loss: 3.5969 (3.8260)  coarse0_loss: 1.7374 (1.7465)  coarse1_loss: 2.0459 (2.0687)  coarse2_loss: 1.3725 (1.5039)  coarse3_loss: 0.8343 (0.8791)  mid_loss: 1.7374 (1.7465)  low_loss: 0.8343 (0.8791)  grad_norm: 266.1962 (inf)  time: 0.2008  data: 0.0001  max mem: 7374
-[17:49:16.212576] Epoch: [0]  [ 60/511]  eta: 0:05:26  lr: 0.000001  loss: 9.1160 (9.8150)  high_loss: 3.4884 (3.7555)  coarse0_loss: 1.7140 (1.7239)  coarse1_loss: 1.9589 (2.0289)  coarse2_loss: 1.3516 (1.4667)  coarse3_loss: 0.7006 (0.8399)  mid_loss: 1.7140 (1.7239)  low_loss: 0.7006 (0.8399)  grad_norm: 275.6364 (inf)  time: 0.2014  data: 0.0001  max mem: 7374
-[17:49:18.664017] Epoch: [0]  [ 72/511]  eta: 0:04:39  lr: 0.000001  loss: 8.9053 (9.6517)  high_loss: 3.4884 (3.7165)  coarse0_loss: 1.6428 (1.7036)  coarse1_loss: 1.9323 (2.0047)  coarse2_loss: 1.1640 (1.4190)  coarse3_loss: 0.6424 (0.8078)  mid_loss: 1.6428 (1.7036)  low_loss: 0.6424 (0.8078)  grad_norm: 283.9690 (inf)  time: 0.2017  data: 0.0001  max mem: 7374
-[17:49:21.128173] Epoch: [0]  [ 84/511]  eta: 0:04:05  lr: 0.000001  loss: 9.4670 (9.6105)  high_loss: 3.9287 (3.7509)  coarse0_loss: 1.6488 (1.6982)  coarse1_loss: 1.9927 (2.0030)  coarse2_loss: 1.1374 (1.3740)  coarse3_loss: 0.6547 (0.7844)  mid_loss: 1.6488 (1.6982)  low_loss: 0.6547 (0.7844)  grad_norm: 320.6591 (inf)  time: 0.2014  data: 0.0001  max mem: 7374
-[17:49:23.550349] Epoch: [0]  [ 96/511]  eta: 0:03:39  lr: 0.000001  loss: 9.0226 (9.5014)  high_loss: 3.9482 (3.7583)  coarse0_loss: 1.6264 (1.6894)  coarse1_loss: 1.8555 (1.9844)  coarse2_loss: 0.9311 (1.3140)  coarse3_loss: 0.5859 (0.7553)  mid_loss: 1.6264 (1.6894)  low_loss: 0.5859 (0.7553)  grad_norm: 313.0253 (inf)  time: 0.2015  data: 0.0001  max mem: 7374
-[17:49:26.149488] Epoch: [0]  [108/511]  eta: 0:03:19  lr: 0.000001  loss: 8.6605 (9.4036)  high_loss: 3.8884 (3.7750)  coarse0_loss: 1.6178 (1.6847)  coarse1_loss: 1.8104 (1.9687)  coarse2_loss: 0.7524 (1.2526)  coarse3_loss: 0.4794 (0.7226)  mid_loss: 1.6178 (1.6847)  low_loss: 0.4794 (0.7226)  grad_norm: 302.8258 (inf)  time: 0.2103  data: 0.0001  max mem: 7374
-[17:49:28.586716] Epoch: [0]  [120/511]  eta: 0:03:02  lr: 0.000001  loss: 8.2212 (9.2665)  high_loss: 3.8597 (3.7768)  coarse0_loss: 1.5844 (1.6685)  coarse1_loss: 1.7960 (1.9437)  coarse2_loss: 0.6448 (1.1863)  coarse3_loss: 0.4252 (0.6913)  mid_loss: 1.5844 (1.6685)  low_loss: 0.4252 (0.6913)  grad_norm: 298.9191 (inf)  time: 0.2101  data: 0.0001  max mem: 7374
-[17:49:31.033639] Epoch: [0]  [132/511]  eta: 0:02:47  lr: 0.000001  loss: 7.8944 (9.1519)  high_loss: 3.8095 (3.7908)  coarse0_loss: 1.5334 (1.6612)  coarse1_loss: 1.5877 (1.9109)  coarse2_loss: 0.5415 (1.1290)  coarse3_loss: 0.3463 (0.6602)  mid_loss: 1.5334 (1.6612)  low_loss: 0.3463 (0.6602)  grad_norm: 282.4955 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:49:33.505852] Epoch: [0]  [144/511]  eta: 0:02:34  lr: 0.000001  loss: 7.5811 (8.9902)  high_loss: 3.7493 (3.7713)  coarse0_loss: 1.6373 (1.6519)  coarse1_loss: 1.4574 (1.8639)  coarse2_loss: 0.4879 (1.0727)  coarse3_loss: 0.3220 (0.6303)  mid_loss: 1.6373 (1.6519)  low_loss: 0.3220 (0.6303)  grad_norm: 282.8605 (inf)  time: 0.2019  data: 0.0001  max mem: 7374
-[17:49:35.985658] Epoch: [0]  [156/511]  eta: 0:02:23  lr: 0.000002  loss: 6.6770 (8.8051)  high_loss: 3.2214 (3.7350)  coarse0_loss: 1.4316 (1.6327)  coarse1_loss: 1.2218 (1.8112)  coarse2_loss: 0.4352 (1.0231)  coarse3_loss: 0.2812 (0.6031)  mid_loss: 1.4316 (1.6327)  low_loss: 0.2812 (0.6031)  grad_norm: 265.6974 (inf)  time: 0.2018  data: 0.0001  max mem: 7374
-[17:49:38.469998] Epoch: [0]  [168/511]  eta: 0:02:14  lr: 0.000002  loss: 6.6766 (8.6572)  high_loss: 3.4905 (3.7162)  coarse0_loss: 1.3649 (1.6133)  coarse1_loss: 1.2197 (1.7670)  coarse2_loss: 0.4532 (0.9825)  coarse3_loss: 0.2643 (0.5782)  mid_loss: 1.3649 (1.6133)  low_loss: 0.2643 (0.5782)  grad_norm: 275.9406 (inf)  time: 0.2015  data: 0.0001  max mem: 7374
-[17:49:40.994840] Epoch: [0]  [180/511]  eta: 0:02:05  lr: 0.000002  loss: 6.3774 (8.4980)  high_loss: 3.4249 (3.6892)  coarse0_loss: 1.2771 (1.5890)  coarse1_loss: 1.0683 (1.7137)  coarse2_loss: 0.4570 (0.9489)  coarse3_loss: 0.2643 (0.5571)  mid_loss: 1.2771 (1.5890)  low_loss: 0.2643 (0.5571)  grad_norm: 270.2411 (inf)  time: 0.2011  data: 0.0001  max mem: 7374
-[17:49:43.445084] Epoch: [0]  [192/511]  eta: 0:01:57  lr: 0.000002  loss: 6.3774 (8.3582)  high_loss: 3.4663 (3.6709)  coarse0_loss: 1.2454 (1.5685)  coarse1_loss: 0.9048 (1.6614)  coarse2_loss: 0.4549 (0.9184)  coarse3_loss: 0.2671 (0.5390)  mid_loss: 1.2454 (1.5685)  low_loss: 0.2671 (0.5390)  grad_norm: 265.1427 (inf)  time: 0.2015  data: 0.0001  max mem: 7374
-[17:49:45.858874] Epoch: [0]  [204/511]  eta: 0:01:49  lr: 0.000002  loss: 6.0527 (8.2200)  high_loss: 3.3698 (3.6521)  coarse0_loss: 1.2216 (1.5444)  coarse1_loss: 0.8162 (1.6111)  coarse2_loss: 0.4341 (0.8900)  coarse3_loss: 0.2549 (0.5223)  mid_loss: 1.2216 (1.5444)  low_loss: 0.2549 (0.5223)  grad_norm: 246.5173 (inf)  time: 0.2014  data: 0.0001  max mem: 7374
-[17:49:48.272455] Epoch: [0]  [216/511]  eta: 0:01:42  lr: 0.000002  loss: 5.8840 (8.0672)  high_loss: 3.2927 (3.6210)  coarse0_loss: 1.1199 (1.5179)  coarse1_loss: 0.7655 (1.5598)  coarse2_loss: 0.4008 (0.8625)  coarse3_loss: 0.2382 (0.5060)  mid_loss: 1.1199 (1.5179)  low_loss: 0.2382 (0.5060)  grad_norm: 242.6596 (inf)  time: 0.2007  data: 0.0001  max mem: 7374
-[17:49:50.730483] Epoch: [0]  [228/511]  eta: 0:01:36  lr: 0.000002  loss: 4.9794 (7.9228)  high_loss: 2.8158 (3.5924)  coarse0_loss: 0.9271 (1.4915)  coarse1_loss: 0.6543 (1.5122)  coarse2_loss: 0.3820 (0.8364)  coarse3_loss: 0.2062 (0.4902)  mid_loss: 0.9271 (1.4915)  low_loss: 0.2062 (0.4902)  grad_norm: 214.8144 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:49:53.221759] Epoch: [0]  [240/511]  eta: 0:01:30  lr: 0.000002  loss: 5.3226 (7.7925)  high_loss: 3.1322 (3.5704)  coarse0_loss: 1.0145 (1.4677)  coarse1_loss: 0.6164 (1.4665)  coarse2_loss: 0.3631 (0.8122)  coarse3_loss: 0.2054 (0.4757)  mid_loss: 1.0145 (1.4677)  low_loss: 0.2054 (0.4757)  grad_norm: 218.5316 (inf)  time: 0.2009  data: 0.0001  max mem: 7374
-[17:49:55.681834] Epoch: [0]  [252/511]  eta: 0:01:24  lr: 0.000002  loss: 5.1535 (7.6444)  high_loss: 3.0496 (3.5329)  coarse0_loss: 0.9358 (1.4391)  coarse1_loss: 0.5659 (1.4220)  coarse2_loss: 0.3390 (0.7889)  coarse3_loss: 0.1897 (0.4615)  mid_loss: 0.9358 (1.4391)  low_loss: 0.1897 (0.4615)  grad_norm: 202.1488 (inf)  time: 0.2010  data: 0.0001  max mem: 7374
-[17:49:58.111709] Epoch: [0]  [264/511]  eta: 0:01:19  lr: 0.000003  loss: 4.8321 (7.5246)  high_loss: 2.9445 (3.5112)  coarse0_loss: 0.8513 (1.4144)  coarse1_loss: 0.5364 (1.3819)  coarse2_loss: 0.3337 (0.7688)  coarse3_loss: 0.1784 (0.4484)  mid_loss: 0.8513 (1.4144)  low_loss: 0.1784 (0.4484)  grad_norm: 186.6653 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:50:00.576700] Epoch: [0]  [276/511]  eta: 0:01:14  lr: 0.000003  loss: 4.7836 (7.4001)  high_loss: 2.9391 (3.4819)  coarse0_loss: 0.8543 (1.3888)  coarse1_loss: 0.4943 (1.3434)  coarse2_loss: 0.3448 (0.7496)  coarse3_loss: 0.1755 (0.4364)  mid_loss: 0.8543 (1.3888)  low_loss: 0.1755 (0.4364)  grad_norm: 184.6302 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:50:03.067650] Epoch: [0]  [288/511]  eta: 0:01:09  lr: 0.000003  loss: 4.4964 (7.2759)  high_loss: 2.7389 (3.4489)  coarse0_loss: 0.7517 (1.3620)  coarse1_loss: 0.4838 (1.3087)  coarse2_loss: 0.3227 (0.7313)  coarse3_loss: 0.1594 (0.4251)  mid_loss: 0.7517 (1.3620)  low_loss: 0.1594 (0.4251)  grad_norm: 169.0512 (inf)  time: 0.2043  data: 0.0001  max mem: 7374
-[17:50:05.571967] Epoch: [0]  [300/511]  eta: 0:01:05  lr: 0.000003  loss: 4.3719 (7.1532)  high_loss: 2.6526 (3.4134)  coarse0_loss: 0.7119 (1.3351)  coarse1_loss: 0.4813 (1.2756)  coarse2_loss: 0.3052 (0.7150)  coarse3_loss: 0.1584 (0.4141)  mid_loss: 0.7119 (1.3351)  low_loss: 0.1584 (0.4141)  grad_norm: 159.9348 (inf)  time: 0.2080  data: 0.0001  max mem: 7374
-[17:50:08.087254] Epoch: [0]  [312/511]  eta: 0:01:00  lr: 0.000003  loss: 4.2324 (7.0378)  high_loss: 2.6202 (3.3806)  coarse0_loss: 0.6575 (1.3096)  coarse1_loss: 0.4665 (1.2445)  coarse2_loss: 0.3008 (0.6991)  coarse3_loss: 0.1539 (0.4040)  mid_loss: 0.6575 (1.3096)  low_loss: 0.1539 (0.4040)  grad_norm: 157.0271 (inf)  time: 0.2100  data: 0.0001  max mem: 7374
-[17:50:10.521551] Epoch: [0]  [324/511]  eta: 0:00:56  lr: 0.000003  loss: 4.0302 (6.9166)  high_loss: 2.5087 (3.3415)  coarse0_loss: 0.6257 (1.2836)  coarse1_loss: 0.4409 (1.2140)  coarse2_loss: 0.2794 (0.6834)  coarse3_loss: 0.1442 (0.3942)  mid_loss: 0.6257 (1.2836)  low_loss: 0.1442 (0.3942)  grad_norm: 147.3517 (inf)  time: 0.2039  data: 0.0001  max mem: 7374
-[17:50:12.956589] Epoch: [0]  [336/511]  eta: 0:00:51  lr: 0.000003  loss: 3.7308 (6.8047)  high_loss: 2.3469 (3.3073)  coarse0_loss: 0.5768 (1.2581)  coarse1_loss: 0.4109 (1.1853)  coarse2_loss: 0.2852 (0.6689)  coarse3_loss: 0.1308 (0.3850)  mid_loss: 0.5768 (1.2581)  low_loss: 0.1308 (0.3850)  grad_norm: 128.6504 (inf)  time: 0.2009  data: 0.0001  max mem: 7374
-[17:50:15.388503] Epoch: [0]  [348/511]  eta: 0:00:47  lr: 0.000003  loss: 3.6777 (6.6942)  high_loss: 2.2810 (3.2696)  coarse0_loss: 0.6202 (1.2357)  coarse1_loss: 0.3876 (1.1580)  coarse2_loss: 0.2675 (0.6552)  coarse3_loss: 0.1179 (0.3757)  mid_loss: 0.6202 (1.2357)  low_loss: 0.1179 (0.3757)  grad_norm: 123.7890 (inf)  time: 0.2014  data: 0.0001  max mem: 7374
-[17:50:17.847174] Epoch: [0]  [360/511]  eta: 0:00:43  lr: 0.000004  loss: 3.5356 (6.5845)  high_loss: 2.1801 (3.2308)  coarse0_loss: 0.5539 (1.2124)  coarse1_loss: 0.3716 (1.1318)  coarse2_loss: 0.2558 (0.6421)  coarse3_loss: 0.1202 (0.3675)  mid_loss: 0.5539 (1.2124)  low_loss: 0.1202 (0.3675)  grad_norm: 121.6155 (inf)  time: 0.2013  data: 0.0001  max mem: 7374
-[17:50:20.334238] Epoch: [0]  [372/511]  eta: 0:00:39  lr: 0.000004  loss: 3.4557 (6.4829)  high_loss: 2.1253 (3.1951)  coarse0_loss: 0.5640 (1.1911)  coarse1_loss: 0.3707 (1.1074)  coarse2_loss: 0.2742 (0.6298)  coarse3_loss: 0.1230 (0.3596)  mid_loss: 0.5640 (1.1911)  low_loss: 0.1230 (0.3596)  grad_norm: 119.5994 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:50:22.744482] Epoch: [0]  [384/511]  eta: 0:00:36  lr: 0.000004  loss: 3.2665 (6.3757)  high_loss: 2.0000 (3.1536)  coarse0_loss: 0.4849 (1.1681)  coarse1_loss: 0.3486 (1.0843)  coarse2_loss: 0.2433 (0.6178)  coarse3_loss: 0.1108 (0.3518)  mid_loss: 0.4849 (1.1681)  low_loss: 0.1108 (0.3518)  grad_norm: 113.0767 (inf)  time: 0.2009  data: 0.0001  max mem: 7374
-[17:50:25.156524] Epoch: [0]  [396/511]  eta: 0:00:32  lr: 0.000004  loss: 3.1347 (6.2745)  high_loss: 1.9295 (3.1139)  coarse0_loss: 0.4709 (1.1473)  coarse1_loss: 0.3480 (1.0620)  coarse2_loss: 0.2329 (0.6067)  coarse3_loss: 0.1089 (0.3446)  mid_loss: 0.4709 (1.1473)  low_loss: 0.1089 (0.3446)  grad_norm: 105.7559 (inf)  time: 0.2004  data: 0.0001  max mem: 7374
-[17:50:27.589795] Epoch: [0]  [408/511]  eta: 0:00:28  lr: 0.000004  loss: 2.9601 (6.1738)  high_loss: 1.7990 (3.0726)  coarse0_loss: 0.4663 (1.1272)  coarse1_loss: 0.3357 (1.0407)  coarse2_loss: 0.2297 (0.5959)  coarse3_loss: 0.1031 (0.3373)  mid_loss: 0.4663 (1.1272)  low_loss: 0.1031 (0.3373)  grad_norm: 102.2442 (inf)  time: 0.2014  data: 0.0001  max mem: 7374
-[17:50:30.012600] Epoch: [0]  [420/511]  eta: 0:00:25  lr: 0.000004  loss: 2.8344 (6.0772)  high_loss: 1.7002 (3.0324)  coarse0_loss: 0.4497 (1.1081)  coarse1_loss: 0.3338 (1.0209)  coarse2_loss: 0.2193 (0.5851)  coarse3_loss: 0.0995 (0.3308)  mid_loss: 0.4497 (1.1081)  low_loss: 0.0995 (0.3308)  grad_norm: 99.0017 (inf)  time: 0.2016  data: 0.0001  max mem: 7374
-[17:50:32.449221] Epoch: [0]  [432/511]  eta: 0:00:21  lr: 0.000004  loss: 2.8303 (5.9853)  high_loss: 1.6960 (2.9943)  coarse0_loss: 0.4497 (1.0896)  coarse1_loss: 0.3390 (1.0020)  coarse2_loss: 0.2287 (0.5752)  coarse3_loss: 0.0986 (0.3243)  mid_loss: 0.4497 (1.0896)  low_loss: 0.0986 (0.3243)  grad_norm: 96.8278 (inf)  time: 0.2013  data: 0.0001  max mem: 7374
-[17:50:34.902964] Epoch: [0]  [444/511]  eta: 0:00:18  lr: 0.000004  loss: 2.6337 (5.8943)  high_loss: 1.5805 (2.9551)  coarse0_loss: 0.4259 (1.0720)  coarse1_loss: 0.3362 (0.9838)  coarse2_loss: 0.2293 (0.5655)  coarse3_loss: 0.0868 (0.3179)  mid_loss: 0.4259 (1.0720)  low_loss: 0.0868 (0.3179)  grad_norm: 91.2830 (inf)  time: 0.2012  data: 0.0001  max mem: 7374
-[17:50:37.317416] Epoch: [0]  [456/511]  eta: 0:00:14  lr: 0.000004  loss: 2.5803 (5.8066)  high_loss: 1.5180 (2.9167)  coarse0_loss: 0.4331 (1.0559)  coarse1_loss: 0.2983 (0.9658)  coarse2_loss: 0.2174 (0.5563)  coarse3_loss: 0.0822 (0.3119)  mid_loss: 0.4331 (1.0559)  low_loss: 0.0822 (0.3119)  grad_norm: 86.2998 (inf)  time: 0.2009  data: 0.0001  max mem: 7374
-[17:50:39.734270] Epoch: [0]  [468/511]  eta: 0:00:11  lr: 0.000005  loss: 2.4564 (5.7193)  high_loss: 1.4433 (2.8781)  coarse0_loss: 0.4189 (1.0390)  coarse1_loss: 0.3004 (0.9489)  coarse2_loss: 0.1988 (0.5472)  coarse3_loss: 0.0836 (0.3061)  mid_loss: 0.4189 (1.0390)  low_loss: 0.0836 (0.3061)  grad_norm: 82.2619 (inf)  time: 0.2010  data: 0.0001  max mem: 7374
-[17:50:42.159099] Epoch: [0]  [480/511]  eta: 0:00:08  lr: 0.000005  loss: 2.4564 (5.6375)  high_loss: 1.4340 (2.8422)  coarse0_loss: 0.4004 (1.0230)  coarse1_loss: 0.3078 (0.9330)  coarse2_loss: 0.2044 (0.5388)  coarse3_loss: 0.0797 (0.3006)  mid_loss: 0.4004 (1.0230)  low_loss: 0.0797 (0.3006)  grad_norm: 81.0882 (inf)  time: 0.2013  data: 0.0001  max mem: 7374
-[17:50:44.615843] Epoch: [0]  [492/511]  eta: 0:00:05  lr: 0.000005  loss: 2.3679 (5.5586)  high_loss: 1.3866 (2.8073)  coarse0_loss: 0.3817 (1.0075)  coarse1_loss: 0.3019 (0.9175)  coarse2_loss: 0.2094 (0.5307)  coarse3_loss: 0.0822 (0.2955)  mid_loss: 0.3817 (1.0075)  low_loss: 0.0822 (0.2955)  grad_norm: 78.2734 (inf)  time: 0.2018  data: 0.0001  max mem: 7374
-[17:50:47.054088] Epoch: [0]  [504/511]  eta: 0:00:01  lr: 0.000005  loss: 2.2167 (5.4781)  high_loss: 1.2937 (2.7698)  coarse0_loss: 0.3823 (0.9930)  coarse1_loss: 0.2776 (0.9023)  coarse2_loss: 0.2019 (0.5226)  coarse3_loss: 0.0864 (0.2905)  mid_loss: 0.3823 (0.9930)  low_loss: 0.0864 (0.2905)  grad_norm: 74.1216 (inf)  time: 0.2017  data: 0.0001  max mem: 7374
-[17:50:48.297774] Epoch: [0]  [510/511]  eta: 0:00:00  lr: 0.000005  loss: 2.2154 (5.4405)  high_loss: 1.2636 (2.7527)  coarse0_loss: 0.3868 (0.9861)  coarse1_loss: 0.2699 (0.8950)  coarse2_loss: 0.1992 (0.5187)  coarse3_loss: 0.0841 (0.2880)  mid_loss: 0.3868 (0.9861)  low_loss: 0.0841 (0.2880)  grad_norm: 73.7271 (inf)  time: 0.1994  data: 0.0001  max mem: 7374
-[17:50:48.612068] Epoch: [0] Total time: 0:02:16 (0.2675 s / it)
-[17:50:48.677520] Averaged stats: lr: 0.000005  loss: 2.2154 (5.4405)  high_loss: 1.2636 (2.7527)  coarse0_loss: 0.3868 (0.9861)  coarse1_loss: 0.2699 (0.8950)  coarse2_loss: 0.1992 (0.5187)  coarse3_loss: 0.0841 (0.2880)  mid_loss: 0.3868 (0.9861)  low_loss: 0.0841 (0.2880)  grad_norm: 73.7271 (inf)
-/global/u1/d/divyam/TACSLAB/Hierarchical-Implicit-Neural-Emulators/engine_plus.py:46: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-[17:50:59.601717] Training time 0:02:27
-PLUS_L5_DEBUG_DONE

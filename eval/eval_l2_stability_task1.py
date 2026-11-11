@@ -150,6 +150,17 @@ ROLL_KEYS = (
     "rZ_norm",
     "recon_norm",
     "cos_rH_rZ",
+    "cos_e_rho",
+    "cos_e_rH",
+    "cos_e_rZ",
+    "cos_rho_rH",
+    "cos_rho_rZ",
+    "cos_e_inj",
+    "cos_rho_inj",
+    "cos_rH_inj",
+    "cos_rZ_inj",
+    "cos_eta_inj",
+    "cos_eta_eta_lin",
     "eps_u_norm",
     "eps_z_norm",
     "e_lin_norm",
@@ -415,48 +426,40 @@ def write_plots(
     dt = float(np.asarray(diag["dt"]))
     fu_err = quotient_halfwidth(diag["tr_A_ci95"], diag["n_fine"], dt)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    _errbar(ax, idx, diag["tr_Fu_over_N"], fu_err, r"Tr$(F_u)/N$")
-    _errbar(
-        ax,
-        idx,
-        diag["tr_DFz_over_N"],
-        quotient_halfwidth(diag["tr_DB_ci95"], diag["n_fine"], dt),
-        r"Tr$(DB)/(N\,dt)$ proxy",
+    direct_panels = (
+        (diag["tr_Fu_over_N"], fu_err, r"Tr$(F_u)/N$"),
+        (
+            diag["tr_DFz_over_N"],
+            quotient_halfwidth(diag["tr_DB_ci95"], diag["n_fine"], dt),
+            r"Tr$(DB)/(N\,dt)$ proxy",
+        ),
+        (diag["tr_Heff_over_N"], None, r"$(Tr J - N)/(N dt)$"),
+        (diag["tr_J_over_N"], diag["tr_J_ci95"] / diag["n_fine"], r"Tr$(J)/N$"),
     )
-    ax.plot(idx, diag["tr_Heff_over_N"], "k--", label=r"$(Tr J - N)/(N dt)$")
-    _errbar(
-        ax,
-        idx,
-        diag["tr_J_over_N"],
-        diag["tr_J_ci95"] / diag["n_fine"],
-        r"Tr$(J)/N$",
-    )
-    ax.set_xlabel("snapshot")
-    ax.set_title(_title(f"Direct-step and difference-quotient traces ({kind})", validated))
-    ax.legend()
+    fig, axes = plt.subplots(len(direct_panels), 1, figsize=(6, 10), sharex=True)
+    for ax, (y, yerr, label) in zip(axes, direct_panels):
+        _errbar(ax, idx, y, yerr, label)
+        ax.set_ylabel(label)
+    axes[-1].set_xlabel("snapshot")
+    fig.suptitle(_title(f"Direct-step and difference-quotient traces ({kind})", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "trace_split.png", dpi=140)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    _errbar(
-        ax,
-        idx,
-        diag["tr_Sigma_over_M"],
-        quotient_halfwidth(diag["tr_S_ci95"], diag["n_coarse"], dt),
-        r"$(Tr S - M)/(M dt)$",
+    parasitic_panels = (
+        (
+            diag["tr_Sigma_over_M"],
+            quotient_halfwidth(diag["tr_S_ci95"], diag["n_coarse"], dt),
+            r"$(Tr S - M)/(M dt)$",
+        ),
+        (diag["tr_S_over_M"], diag["tr_S_ci95"] / diag["n_coarse"], r"Tr$(S)/M$"),
     )
-    _errbar(
-        ax,
-        idx,
-        diag["tr_S_over_M"],
-        diag["tr_S_ci95"] / diag["n_coarse"],
-        r"Tr$(S)/M$",
-    )
-    ax.set_xlabel("snapshot")
-    ax.set_title(_title(f"Parasitic trace ({kind})", validated))
-    ax.legend()
+    fig, axes = plt.subplots(len(parasitic_panels), 1, figsize=(6, 6), sharex=True)
+    for ax, (y, yerr, label) in zip(axes, parasitic_panels):
+        _errbar(ax, idx, y, yerr, label)
+        ax.set_ylabel(label)
+    axes[-1].set_xlabel("snapshot")
+    fig.suptitle(_title(f"Parasitic trace ({kind})", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "parasitic_trace.png", dpi=140)
     plt.close(fig)
@@ -523,12 +526,34 @@ def write_plots(
     fig.savefig(plot_dir / "retention_channels.png", dpi=140)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, _defined_mean(rolls["cos_rH_rZ"]), label=r"$\cos(r_H,r_z)$")
-    ax.set_ylim(-1.0, 1.0)
-    ax.set_xlabel("step")
-    ax.legend()
-    ax.set_title(_title("Channel alignment; undefined cosines are gaps", validated))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
+    fine_cos = (
+        ("cos_rH_rZ", r"$\cos(r_H,r_z)$"),
+        ("cos_e_rho", r"$\cos(e,\rho)$"),
+        ("cos_e_inj", r"$\cos(e,\mathrm{inj})$"),
+        ("cos_rho_inj", r"$\cos(\rho,\mathrm{inj})$"),
+        ("cos_e_rH", r"$\cos(e,r_H)$"),
+        ("cos_e_rZ", r"$\cos(e,r_z)$"),
+        ("cos_rho_rH", r"$\cos(\rho,r_H)$"),
+        ("cos_rho_rZ", r"$\cos(\rho,r_z)$"),
+        ("cos_rH_inj", r"$\cos(r_H,\mathrm{inj})$"),
+        ("cos_rZ_inj", r"$\cos(r_z,\mathrm{inj})$"),
+    )
+    latent_cos = (
+        ("cos_eta_inj", r"$\cos(\eta_n,Z_n)$"),
+        ("cos_eta_eta_lin", r"$\cos(\eta_n,\eta_{\mathrm{lin},n})$"),
+    )
+    for key, label in fine_cos:
+        axes[0].plot(lead, _defined_mean(rolls[key]), label=label)
+    for key, label in latent_cos:
+        axes[1].plot(lead, _defined_mean(rolls[key]), label=label)
+    axes[0].set_title("Fine")
+    axes[1].set_title(r"Latent $\eta_n$")
+    for ax in axes:
+        ax.set_ylim(-1.0, 1.0)
+        ax.set_xlabel("step")
+        ax.legend(fontsize=8)
+    fig.suptitle(_title("Cosine alignment; undefined cosines are gaps", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "retention_alignment.png", dpi=140)
     plt.close(fig)
@@ -945,7 +970,11 @@ def write_final(
         ],
         "norm": args.norm,
         "dt_emulator": args.dt,
-        "dt_meaning": "one emulator step; default 0.25 = five 0.05 snapshots",
+        "dt_meaning": (
+            "Time divisor for the difference quotients, and the time between "
+            "consecutive kept frames. Eval mats are 0.01 apart; "
+            "--every-nth-field 5 keeps frames 0.05 apart."
+        ),
         "downsampling": primary["downsampling"],
         "physical_jvp": primary["physical_jvp"],
         "is_exact_physical_jvp": False,

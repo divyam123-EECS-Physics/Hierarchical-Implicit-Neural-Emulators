@@ -40,6 +40,7 @@ from py2d_inmem import (
     fd_tangent,
     pool_avg,
     rms,
+    steps_for,
     truncate_field,
 )
 from task35_common import (
@@ -89,6 +90,14 @@ def parse_args(argv=None):
     p.add_argument("--gpu-rank", type=int, default=0)
     p.add_argument("--worker", action="store_true")
     p.add_argument("--skip-existing", action="store_true")
+    p.add_argument("--direction-source", choices=["random", "sync-final"], default="random")
+    p.add_argument(
+        "--sync-dir",
+        default="/pscratch/sd/d/divyam/hine_runs/py2d_sync/pool_factors",
+    )
+    p.add_argument("--sync-factor", type=int, default=8)
+    p.add_argument("--sync-T", type=float, default=2.0)
+    p.add_argument("--dns-save-dt", type=float, default=0.01)
     return p.parse_args(argv)
 
 
@@ -111,6 +120,19 @@ def case_filename(sample: int, direction: int, eps: float) -> str:
     return f"s{sample:02d}_d{direction}_eps{eps:.1e}.npz"
 
 
+def slow_case_name(segment: int, direction: int, probe: str) -> str:
+    return f"s{segment:02d}_d{direction}_{probe}.npz"
+
+
+def slow_cases(n_segments: int, n_directions: int) -> list[tuple[int, int, str]]:
+    keys = []
+    for segment in range(n_segments):
+        for direction in range(n_directions):
+            keys.append((segment, direction, "sync-final"))
+            keys.append((segment, direction, "random"))
+    return keys
+
+
 def _direction(rng, field, factor, eps_unused):
     v = q_model(rng.standard_normal(field.shape), factor)
     scale = rms(v)
@@ -119,7 +141,7 @@ def _direction(rng, field, factor, eps_unused):
     return v / scale
 
 
-def compare_one(args, step, solver, projector, sample, direction, eps, factor, floor):
+def compare_one(args, step, solver, projector, sample, direction, eps, factor, floor, v=None, probe="random"):
     frames = sample["frames"]
     u_n = frames[0]["omega"]
     u_np1 = frames[1]["omega"]
@@ -128,8 +150,15 @@ def compare_one(args, step, solver, projector, sample, direction, eps, factor, f
     u512, _t = load_omega(dns_n)
     trunc_err = rel_rms(truncate_field(u512, u_n.shape[0]), u_n)
     path = solver.record_coarse_path(u512, projector, args.delta_t)
-    rng = np.random.default_rng(args.seed + 50 * sample["sample"] + direction)
-    v = _direction(rng, u_n, factor, eps)
+    if v is None:
+        rng = np.random.default_rng(args.seed + 50 * sample["sample"] + direction)
+        v = _direction(rng, u_n, factor, eps)
+    else:
+        v = q_model(np.asarray(v, dtype=np.float64), factor)
+        scale = rms(v)
+        if scale == 0.0:
+            raise RuntimeError("supplied fine direction vanished")
+        v = v / scale
     a = step.jvp_fine_fixed_latent(u_n, z, v)
     a_v = q_model(a, factor)
     direction_512 = embed_field(v, solver.cfg.nx)
@@ -163,6 +192,7 @@ def compare_one(args, step, solver, projector, sample, direction, eps, factor, f
         "truncate_vs_eval_rel": trunc_err,
         "conditional_coarse_rel": coarse_err,
         "norm_v": nv,
+        "probe": probe,
     }
 
 
@@ -174,7 +204,19 @@ def _plot(save_dir: Path, rows: list[dict]) -> None:
     if not use:
         use = rows
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.scatter([r["gain_A"] for r in use], [r["gain_Psi"] for r in use], s=22)
+    probes = sorted({str(r.get("probe", "random")) for r in use})
+    if probes == ["random"]:
+        ax.scatter([r["gain_A"] for r in use], [r["gain_Psi"] for r in use], s=22)
+    else:
+        for probe in probes:
+            subset = [r for r in use if str(r.get("probe", "random")) == probe]
+            ax.scatter(
+                [r["gain_A"] for r in subset],
+                [r["gain_Psi"] for r in subset],
+                s=22,
+                label=probe,
+            )
+        ax.legend()
     vals = [r["gain_A"] for r in use] + [r["gain_Psi"] for r in use]
     lo, hi = min(vals), max(vals)
     ax.plot([lo, hi], [lo, hi], color="0.5", lw=1)
@@ -200,14 +242,21 @@ def _save_case(path: Path, row: dict) -> None:
     np.savez_compressed(path, **{key: np.asarray(value) for key, value in row.items()})
 
 
-def _load_cases(args, save_dir: Path) -> list[dict]:
+def _expected_case_names(args) -> list[str]:
+    if args.direction_source == "sync-final":
+        return [slow_case_name(*key) for key in slow_cases(args.n_states, args.n_directions)]
     keys = hine_case_keys(
         args.n_states, args.n_directions, args.fd_eps, args.stability_subset, args.eps_sweep
     )
+    return [case_filename(*key) for key in keys]
+
+
+def _load_cases(args, save_dir: Path) -> list[dict]:
+    names = _expected_case_names(args)
     rows = []
     missing = []
-    for sample, direction, eps in keys:
-        path = save_dir / case_filename(sample, direction, eps)
+    for name in names:
+        path = save_dir / name
         if not path.is_file():
             missing.append(path.name)
             continue
@@ -285,7 +334,90 @@ def _prepare(args):
     return save_dir, step, solver, projector, factor, samples, note
 
 
+def _end_state(stem: int, time: float, total: float, delta_t: float, dns_dt: float, nx_model: int):
+    stem_end = int(stem) + steps_for(dns_dt, total)
+    stem_next = stem_end + steps_for(dns_dt, delta_t)
+    u512, t_end = load_omega(DNS_DATA / f"{stem_end}.mat")
+    u_next, t_next = load_omega(DNS_DATA / f"{stem_next}.mat")
+    if abs(t_end - (float(time) + total)) > 1e-6:
+        raise RuntimeError(
+            f"DNS stem {stem_end} is at t={t_end}, expected {float(time) + total}"
+        )
+    if abs((t_next - t_end) - delta_t) > 1e-6:
+        raise RuntimeError(f"frame after the sync end is spaced {t_next - t_end}, not {delta_t}")
+    return (
+        truncate_field(u512, nx_model),
+        truncate_field(u_next, nx_model),
+        stem_end,
+    )
+
+
+def _execute_sync_final(args, *, summarize: bool):
+    save_dir, step, solver, projector, factor, _samples, note = _prepare(args)
+    if int(factor) != int(args.sync_factor):
+        raise RuntimeError(
+            f"checkpoint pool factor {factor} != --sync-factor {args.sync_factor}"
+        )
+    note["direction_source"] = "sync-final"
+    note["sync_dir"] = args.sync_dir
+    note["linearization"] = "true field at the end of the synchronization segment"
+    keys = slow_cases(args.n_states, args.n_directions)
+    owned = [
+        key
+        for index, key in enumerate(keys)
+        if args.n_gpus <= 1 or index % args.n_gpus == args.gpu_rank
+    ]
+    print(f"[H] rank {args.gpu_rank}/{args.n_gpus} owns {len(owned)} slow-direction cases", flush=True)
+    if args.gpu_rank == 0 or args.n_gpus <= 1:
+        write_json(save_dir / "projector.json", note)
+    nx_model = int(projector.nx_model)
+    for segment, direction, probe in owned:
+        path = save_dir / slow_case_name(segment, direction, probe)
+        if args.skip_existing and path.is_file():
+            print(f"[H] skip {path.name}", flush=True)
+            continue
+        sync_path = Path(args.sync_dir) / f"pool{factor}_seg{segment}_dir{direction}.npz"
+        if not sync_path.is_file():
+            raise RuntimeError(f"missing synchronization field {sync_path}")
+        data = np.load(sync_path)
+        if "final_fine_256" not in data.files:
+            raise RuntimeError(f"{sync_path} has no final_fine_256")
+        stem = int(np.asarray(data["stem"]).reshape(-1)[0])
+        time = float(np.asarray(data["time"]).reshape(-1)[0])
+        u_n, u_np1, stem_end = _end_state(
+            stem, time, args.sync_T, args.delta_t, args.dns_save_dt, nx_model
+        )
+        sample = {
+            "sample": segment,
+            "frames": [
+                {"omega": u_n, "stem": stem_end},
+                {"omega": u_np1, "stem": stem_end},
+            ],
+        }
+        if probe == "sync-final":
+            direction_field = np.asarray(data["final_fine_256"], dtype=np.float64)
+        else:
+            rng = np.random.default_rng(args.seed + 10007 * segment + direction)
+            direction_field = _direction(rng, u_n, factor, args.fd_eps)
+        row = compare_one(
+            args, step, solver, projector, sample, direction, args.fd_eps,
+            factor, args.floor, v=direction_field, probe=probe,
+        )
+        print(
+            f"[H] segment={segment} dir={direction} probe={probe} "
+            f"A={row['gain_A']:.4g} Psi={row['gain_Psi']:.4g} "
+            f"mismatch={row['mismatch']:.4g} cos={row['cosine']:.4g}",
+            flush=True,
+        )
+        _save_case(path, row)
+    if not summarize:
+        return None
+    return _finalize(args, save_dir, note)
+
+
 def execute(args, *, summarize: bool) -> list[dict] | None:
+    if args.direction_source == "sync-final":
+        return _execute_sync_final(args, summarize=summarize)
     save_dir, step, solver, projector, factor, samples, note = _prepare(args)
     by_sample = {int(sample["sample"]): sample for sample in samples}
     keys = hine_case_keys(

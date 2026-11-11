@@ -24,6 +24,9 @@ results/
 
 # Local NERSC Slurm launchers and job logs
 nersc_job_launchers/
+logs/
+*.log
+*.out
 
 # OS / editor
 .DS_Store
