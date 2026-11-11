@@ -431,11 +431,11 @@ def product_growth(args, step, solver, factor, kept_samples_unused, eval_dir):
     n_steps = args.burn_in + args.product_steps
     if args.product_start + n_steps + 1 >= len(kept):
         raise ValueError("product segment does not fit in the kept list")
-        rates = []
-        for start_id in range(args.n_starts):
-            rng = np.random.default_rng(args.seed + 17 + start_id)
-            v = None
-            gains = []
+    rates = []
+    for start_id in range(args.n_starts):
+        rng = np.random.default_rng(args.seed + 17 + start_id)
+        v = None
+        gains = []
         underflow = False
         for j in range(n_steps):
             stem_n, path_n = kept[args.product_start + j]

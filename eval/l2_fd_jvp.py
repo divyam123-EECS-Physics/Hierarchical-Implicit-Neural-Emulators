@@ -41,6 +41,24 @@ class L2Point:
     stems: tuple[int, int, int]
 
 
+def load_ema_float64(checkpoint: str, device: torch.device):
+    """Eval-mode L=2 EMA in float64. No float32 cast on the way out.
+
+    model_step returns the network tensors. Callers scale by norm in
+    float64 when they want physical units. ModelStepPhysical._out is not used.
+    """
+    from eval_jacobian_manual_mse_plus import load_model
+
+    model, _ema = load_model(checkpoint, device)
+    assert_l2(model)
+    model = model.double()
+    ema = model.ema_vit
+    dtype = next(ema.parameters()).dtype
+    if dtype != torch.float64:
+        raise RuntimeError(f"EMA parameters are {dtype}, expected float64")
+    return model, ema
+
+
 def assert_l2(model) -> None:
     if int(getattr(model, "num_coarse", -1)) != 1:
         raise ValueError(
@@ -90,6 +108,30 @@ def make_point(
 def apply_D(v: torch.Tensor, ds: int) -> torch.Tensor:
     """Average-pool restriction. Same operator as FutureINNPlus._pool_seq."""
     return F.avg_pool2d(v, kernel_size=ds, stride=ds)
+
+
+def lock_precision() -> dict:
+    """Float32 matmul settings for finite-difference Jacobian actions.
+
+    Autocast must be off. TF32 is off. This does not change tensor dtype;
+    callers keep activations in float64 themselves.
+    """
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.set_float32_matmul_precision("highest")
+    if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
+        torch.backends.cuda.matmul.fp32_precision = "ieee"
+    conv = getattr(torch.backends.cudnn, "conv", None)
+    if hasattr(conv, "fp32_precision"):
+        conv.fp32_precision = "ieee"
+    if torch.is_autocast_enabled():
+        raise RuntimeError("finite differences require autocast to be off")
+    return {
+        "autocast_enabled": False,
+        "allow_tf32_matmul": False,
+        "allow_tf32_cudnn": False,
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+    }
 
 
 @torch.no_grad()

@@ -8,6 +8,8 @@ Proxy mode uses xi = eps_z - D eps_u and J_phys = A + B D.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 
@@ -18,6 +20,30 @@ from l2_physical_jvp import is_proxy
 
 def _norm(x: torch.Tensor) -> float:
     return float(x.reshape(-1).double().norm())
+
+
+def _rms(x: torch.Tensor) -> float:
+    flat = x.detach().reshape(-1).double()
+    if flat.numel() == 0:
+        return 0.0
+    return float(torch.sqrt(torch.mean(flat * flat)))
+
+
+def combined_rms(p: torch.Tensor, q: torch.Tensor) -> float:
+    """Block-balanced size sqrt(RMS(p)^2 + RMS(q)^2)."""
+    return math.sqrt(_rms(p) ** 2 + _rms(q) ** 2)
+
+
+def apply_shared_rescale(p: torch.Tensor, q: torch.Tensor, cum_log: float, lo: float = 1e-6, hi: float = 1e6):
+    """Divide p and q by one shared factor when their combined RMS leaves [lo, hi].
+
+    The returned cumulative log is the log of the product of those factors.
+    Physical tensors are stored * exp(cum_log). Neither block is scaled alone.
+    """
+    scale = combined_rms(p, q)
+    if not math.isfinite(scale) or scale == 0.0 or lo <= scale <= hi:
+        return p, q, float(cum_log), False
+    return p / scale, q / scale, float(cum_log) + math.log(scale), True
 
 
 def _cos(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -165,6 +191,46 @@ def propagate_augmented(step_at, points: list[L2Point], eps_u, eps_z, eps_rel: f
         e_lin.append(dg + eps_u[n])
         eta_lin.append(dh + eps_z[n])
     return e_lin, eta_lin
+
+
+def propagate_homogeneous(
+    step_at,
+    bases: list[L2Point],
+    p0: torch.Tensor,
+    q0: torch.Tensor,
+    eps_rel: float,
+    rescale: bool = True,
+    lo: float = 1e-6,
+    hi: float = 1e6,
+):
+    """Homogeneous fine/latent tangent. No prediction-error injection.
+
+    p_next = A p + B q and q_next = C p + K q, from one mixed centered
+    difference. Stored states times exp(log_scale) reconstruct the
+    unscaled tensors when rescale is on. log_scale[0] is 0.
+    """
+    if len(bases) == 0:
+        raise ValueError("homogeneous propagation needs at least one base point")
+    p = p0.detach().clone()
+    q = q0.detach().clone()
+    ps = [p.detach().clone()]
+    qs = [q.detach().clone()]
+    log_scale = [0.0]
+    cum = 0.0
+    for n, pt in enumerate(bases):
+        if _norm(p) == 0.0 and _norm(q) == 0.0:
+            dg = torch.zeros_like(p)
+            dh = torch.zeros_like(q)
+        else:
+            dg, dh = fd_both_uz(step_at(n), pt, p, q, eps_rel)
+        p = dg.detach()
+        q = dh.detach()
+        if rescale:
+            p, q, cum, _applied = apply_shared_rescale(p, q, cum, lo=lo, hi=hi)
+        ps.append(p.detach().clone())
+        qs.append(q.detach().clone())
+        log_scale.append(float(cum))
+    return ps, qs, log_scale
 
 
 def validation_directions(points, eps_u, xi, e_lin, eta_lin, tangent, ds: int, norm: float) -> list:
