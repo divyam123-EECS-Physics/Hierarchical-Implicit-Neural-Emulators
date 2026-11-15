@@ -81,7 +81,6 @@ from eval_jacobian_manual_mse import load_kept_paths
 from eval_jacobian_manual_mse_plus import load_model
 from l2_fd_jvp import (
     DEFAULT_EPS_LIST,
-    FD_OUTPUT_FLOOR,
     FD_SCALING,
     apply_D,
     assert_l2,
@@ -91,7 +90,7 @@ from l2_fd_jvp import (
 )
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth
 from l2_physical_jvp import make_tangent, validate_physical_reference
-from l2_retention import relative_residual, rollout_diagnostics
+from l2_retention import rollout_diagnostics
 
 
 DIAG_KEYS = [
@@ -517,92 +516,44 @@ def write_plots(
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|\tilde r_H\|$ truncated")
-    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|\tilde r_z\|$ truncated")
+    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|r_H\|$")
+    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|r_z\|$")
+    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
     ax.set_xlabel("step")
     ax.legend()
-    ax.set_title(_title("Truncated first-factor channels", validated))
+    ax.set_title(_title("Channel norms", validated))
     fig.tight_layout()
-    fig.savefig(plot_dir / "retention_channels.png", dpi=140)
+    fig.savefig(plot_dir / "channel_norms.png", dpi=140)
     plt.close(fig)
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-    fine_cos = (
-        ("cos_rH_rZ", r"$\cos(r_H,r_z)$"),
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(lead, rolls["e_norm"].mean(0), label=r"$\|e\|$")
+    ax.plot(lead, rolls["eta_norm"].mean(0), label=r"$\|\eta\|$")
+    ax.plot(lead, rolls["R"].mean(0), label=r"$R_n=\|e_n\|-I_n$")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title("Error norms", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "error_norms.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    alignment = (
         ("cos_e_rho", r"$\cos(e,\rho)$"),
-        ("cos_e_inj", r"$\cos(e,\mathrm{inj})$"),
-        ("cos_rho_inj", r"$\cos(\rho,\mathrm{inj})$"),
         ("cos_e_rH", r"$\cos(e,r_H)$"),
         ("cos_e_rZ", r"$\cos(e,r_z)$"),
         ("cos_rho_rH", r"$\cos(\rho,r_H)$"),
         ("cos_rho_rZ", r"$\cos(\rho,r_z)$"),
-        ("cos_rH_inj", r"$\cos(r_H,\mathrm{inj})$"),
-        ("cos_rZ_inj", r"$\cos(r_z,\mathrm{inj})$"),
     )
-    latent_cos = (
-        ("cos_eta_inj", r"$\cos(\eta_n,Z_n)$"),
-        ("cos_eta_eta_lin", r"$\cos(\eta_n,\eta_{\mathrm{lin},n})$"),
-    )
-    for key, label in fine_cos:
-        axes[0].plot(lead, _defined_mean(rolls[key]), label=label)
-    for key, label in latent_cos:
-        axes[1].plot(lead, _defined_mean(rolls[key]), label=label)
-    axes[0].set_title("Fine")
-    axes[1].set_title(r"Latent $\eta_n$")
-    for ax in axes:
-        ax.set_ylim(-1.0, 1.0)
-        ax.set_xlabel("step")
-        ax.legend(fontsize=8)
-    fig.suptitle(_title("Cosine alignment; undefined cosines are gaps", validated))
+    for key, label in alignment:
+        ax.plot(lead, _defined_mean(rolls[key]), label=label)
+    ax.set_ylim(-1.0, 1.0)
+    ax.set_xlabel("step")
+    ax.legend(fontsize=8)
+    ax.set_title(_title("Cosine alignment; undefined cosines are gaps", validated))
     fig.tight_layout()
     fig.savefig(plot_dir / "retention_alignment.png", dpi=140)
     plt.close(fig)
-
-    rel = relative_residual(rolls["recon_norm"], rolls["rho_norm"], FD_OUTPUT_FLOOR)
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-\tilde r_H-\tilde r_z\|$")
-    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
-    ax.set_xlabel("step")
-    ax.legend()
-    ax.set_title(_title("Truncated first-factor residual", validated))
-    fig.tight_layout()
-    fig.savefig(plot_dir / "reconstruction_residual.png", dpi=140)
-    plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, _defined_mean(rel), label="mean of per-window ratios")
-    ax.set_xlabel("step")
-    ax.set_ylabel(r"$\|\rho-r_H-r_z\| / \max(\|\rho\|, floor)$")
-    ax.legend()
-    ax.set_title(_title("Per-window relative reconstruction residual", validated))
-    fig.tight_layout()
-    fig.savefig(plot_dir / "relative_reconstruction.png", dpi=140)
-    plt.close(fig)
-
-    if "e_lin_norm" in rolls:
-        fig, axes = plt.subplots(2, 2, figsize=(8, 6))
-        axes[0, 0].plot(lead, rolls["e_norm"].mean(0), label="actual")
-        axes[0, 0].plot(lead, rolls["e_lin_norm"].mean(0), label="linearized")
-        axes[0, 0].set_title(r"fine $\|e\|$")
-        axes[0, 0].legend()
-        axes[0, 1].plot(lead, rolls["eta_norm"].mean(0), label="actual")
-        axes[0, 1].plot(lead, rolls["eta_lin_norm"].mean(0), label="linearized")
-        axes[0, 1].set_title(r"latent $\|\eta\|$")
-        axes[0, 1].legend()
-        axes[1, 0].plot(lead, rolls["e_lin_err"].mean(0), label=r"$\|e-e_{lin}\|$")
-        axes[1, 0].plot(lead, rolls["eta_lin_err"].mean(0), label=r"$\|\eta-\eta_{lin}\|$")
-        axes[1, 0].set_title("vector linearization error")
-        axes[1, 0].legend()
-        axes[1, 1].plot(lead, rolls["recon_norm"].mean(0), label=r"$\|\rho-r_H-r_z\|$")
-        axes[1, 1].plot(lead, rolls["recon_lin_norm"].mean(0), label=r"$\|\rho_{lin}-r_H-r_z\|$")
-        axes[1, 1].set_title("truncation versus linearization")
-        axes[1, 1].legend()
-        for ax in axes.ravel():
-            ax.set_xlabel("step")
-        fig.suptitle(_title("Full linearized error versus free rollout", validated))
-        fig.tight_layout()
-        fig.savefig(plot_dir / "linearized_error.png", dpi=140)
-        plt.close(fig)
 
 
 def _stack_results(
