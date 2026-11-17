@@ -98,6 +98,81 @@ def test_tag_to_dirname():
     assert tag_to_dirname("Z1-Z1,Z2") == "Z1-Z1_Z2"
 
 
+def test_rectangular_svds_accepts_column_cotangent():
+    """Tall blocks (fine from coarse) and wide blocks (coarse from fine)."""
+    import numpy as np
+    import torch
+    from torch import nn
+
+    from eval_jacobian_blocks import compute_block_spectrum
+    from eval_jacobian_blocks_plus import compute_block_spectrum_plus
+    from jacobian_blocks_lib import LEVELS_L3, levels_plus, parse_block_tag
+
+    class TinyL3(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.scale = nn.Parameter(torch.tensor(1.0))
+
+        def forward(self, u, z1, z2, t):
+            oh = self.scale * u + z2.repeat_interleave(2, dim=-1).repeat_interleave(
+                2, dim=-2
+            )
+            om = self.scale * z1
+            ol = self.scale * z2 + u[..., ::2, ::2]
+            return oh, om, ol
+
+    class TinyL2(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.scale = nn.Parameter(torch.tensor(1.0))
+
+        def forward(self, u, coarses, t):
+            z1 = coarses[0]
+            oh = self.scale * u + z1.repeat_interleave(2, dim=-1).repeat_interleave(
+                2, dim=-2
+            )
+            oz = self.scale * z1 + u[..., ::2, ::2]
+            return oh, [oz]
+
+    class Model:
+        num_coarse = 1
+
+    def _check(result, tag: str) -> None:
+        radius = float(np.asarray(result["radius"]))
+        assert result["spectrum_kind"].item() == "singular_value", tag
+        assert np.isfinite(radius) and radius > 0, (tag, radius)
+
+    torch.manual_seed(0)
+    high = torch.randn(1, 1, 4, 4)
+    mid = torch.randn(1, 1, 3, 3)
+    low = torch.randn(1, 1, 2, 2)
+    l3 = TinyL3()
+    for tag in ("Z2-U", "U-Z2"):
+        block = parse_block_tag(tag, LEVELS_L3)
+        result = compute_block_spectrum(
+            l3, high, mid, low, block, ncv=20, maxiter=200, tol=1e-3
+        )
+        _check(result, tag)
+
+    z1 = torch.randn(1, 1, 2, 2)
+    allowed = levels_plus(1)
+    l2 = TinyL2()
+    for tag in ("Z1-U", "U-Z1"):
+        block = parse_block_tag(tag, allowed)
+        result = compute_block_spectrum_plus(
+            l2,
+            Model(),
+            high,
+            [z1],
+            allowed,
+            block,
+            ncv=20,
+            maxiter=200,
+            tol=1e-3,
+        )
+        _check(result, tag)
+
+
 def test_choose_sample_starts():
     from eval_jacobian_blocks import choose_sample_starts
 
@@ -123,4 +198,5 @@ if __name__ == "__main__":
     test_bad_tag_forms()
     test_tag_to_dirname()
     test_choose_sample_starts()
+    test_rectangular_svds_accepts_column_cotangent()
     print("ok")

@@ -1,8 +1,8 @@
 """Matrix-free L=2 blocks, Hutchinson traces, amplification, rho(S).
 
 Proxy compositions use D Phi' ≈ D and are named proxy.
-py2d_fd compositions use a finite-difference tangent through the py2d step.
-That finite difference is not an exact tangent.
+py2d_jvp compositions use jax.jvp of the 512 DNS advance.
+Network blocks are torch.autograd.functional.jvp, not finite differences.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from l2_fd_jvp import (
     FD_OUTPUT_FLOOR,
     L2Point,
     apply_D,
-    fd_additivity,
-    fd_both_u,
-    fd_both_uz,
-    fd_both_z,
+    jvp_additivity,
+    jvp_both_u,
+    jvp_both_uz,
+    jvp_both_z,
 )
 from l2_physical_jvp import is_proxy
 def _stats(samples: list[float] | np.ndarray) -> dict:
@@ -31,7 +31,7 @@ def _stats(samples: list[float] | np.ndarray) -> dict:
 
 
 def _rademacher(n: int, rng: np.random.Generator) -> np.ndarray:
-    return rng.choice(np.array([-1.0, 1.0], dtype=np.float64), size=n).astype(np.float32)
+    return rng.choice(np.array([-1.0, 1.0], dtype=np.float64), size=n)
 
 
 def _as_image(flat: np.ndarray, like: torch.Tensor) -> torch.Tensor:
@@ -58,19 +58,31 @@ def gates_pass(sweep_ok: bool, composition_rel_max: float, fd_additivity_rel: fl
     )
 
 
-def _phi_image(tangent, u_model: torch.Tensor, v_model: torch.Tensor, norm: float) -> torch.Tensor:
+def _phi_image(
+    tangent,
+    u_model: torch.Tensor,
+    v_model: torch.Tensor,
+    norm: float,
+    dns=None,
+    hats=None,
+) -> torch.Tensor:
     """Phi'(u) v in model coordinates. The proxy returns v.
 
-    The solver sees the same dtype as the model tensors. A later cast back
-    to float64 does not restore a float32 round trip.
+    The physical tangent differentiates the 512 DNS field `dns` and returns
+    a field on the model grid. Values stay in the model dtype, float64 when
+    the caller is float64.
     """
     if is_proxy(tangent):
         return v_model
-    np_dtype = np.float64 if v_model.dtype == torch.float64 else np.float32
+    np_dtype = np.float64
     u_phys = np.asarray(u_model[0, 0].detach().cpu().numpy(), dtype=np_dtype) * np_dtype(norm)
     v_phys = np.asarray(v_model[0, 0].detach().cpu().numpy(), dtype=np_dtype) * np_dtype(norm)
-    jv = np.asarray(tangent.apply(u_phys, v_phys), dtype=np_dtype)
-    out = torch.from_numpy(jv) / float(norm)
+    try:
+        jv = tangent.apply(u_phys, v_phys, dns=dns, hats=hats)
+    except TypeError:
+        jv = tangent.apply(u_phys, v_phys)
+    jv = np.asarray(jv, dtype=np_dtype)
+    out = torch.from_numpy(np.ascontiguousarray(jv)) / float(norm)
     return out.to(device=v_model.device, dtype=v_model.dtype).view_as(v_model)
 
 
@@ -102,7 +114,11 @@ def diagnose_point(
     S uses D Phi' at u_{n+1}. Those two are not the same operator.
     """
     proxy = is_proxy(tangent)
-    tag = "proxy" if proxy else "py2d_fd"
+    tag = "proxy" if proxy else "py2d_jvp"
+    dns = getattr(point, "dns", None)
+    dns_next = getattr(point, "dns_next", None)
+    hats = getattr(point, "hats", None)
+    hats_next = getattr(point, "hats_next", None)
     rng = np.random.default_rng(seed)
     n_fine = int(point.u.numel())
     n_coarse = int(point.z.numel())
@@ -111,14 +127,14 @@ def diagnose_point(
     for _ in range(n_probes):
         v = _as_image(_rademacher(n_fine, rng), point.u)
         # w = D Phi'_n v. Proxy Phi' is the identity, so w = D v.
-        w = apply_D(_phi_image(tangent, point.u, v, norm), ds)
-        Av, _Cv = fd_both_u(step_fn, point, v, eps_rel)
-        Bw, _Kw = fd_both_z(step_fn, point, w, eps_rel)
-        Jv, mixed_h = fd_both_uz(step_fn, point, v, w, eps_rel)
+        w = apply_D(_phi_image(tangent, point.u, v, norm, dns=dns, hats=hats), ds)
+        Av, _Cv = jvp_both_u(step_fn, point, v, eps_rel)
+        Bw, _Kw = jvp_both_z(step_fn, point, w, eps_rel)
+        Jv, mixed_h = jvp_both_uz(step_fn, point, v, w, eps_rel)
         if proxy:
             lifted = Jv
         else:
-            lifted = _phi_image(tangent, point.u_next, Jv, norm)
+            lifted = _phi_image(tangent, point.u_next, Jv, norm, dns=dns_next, hats=hats_next)
         # (C + K D Phi'_n) v - D Phi'_{n+1} J v
         L = mixed_h - apply_D(lifted, ds)
         vf = v.reshape(-1).double()
@@ -132,12 +148,15 @@ def diagnose_point(
     tr_K, tr_DB, tr_DPhi_next, tr_S = [], [], [], []
     for _ in range(n_probes):
         w = _as_image(_rademacher(n_coarse, rng), point.z)
-        Bw, Kw = fd_both_z(step_fn, point, w, eps_rel)
+        Bw, Kw = jvp_both_z(step_fn, point, w, eps_rel)
         DBw = apply_D(Bw, ds)
         if proxy:
             DPhi_next_B = DBw
         else:
-            DPhi_next_B = apply_D(_phi_image(tangent, point.u_next, Bw, norm), ds)
+            DPhi_next_B = apply_D(
+                _phi_image(tangent, point.u_next, Bw, norm, dns=dns_next, hats=hats_next),
+                ds,
+            )
         Sw = Kw - DPhi_next_B
         wf = w.reshape(-1).double()
         tr_K.append(float(torch.dot(wf, Kw.reshape(-1).double())))
@@ -156,7 +175,7 @@ def diagnose_point(
     def quot(tr_mean: float, dim: int) -> float:
         return (tr_mean - dim) / (dim * dt)
 
-    add = fd_additivity(step_fn, point, eps_rel, seed)
+    add = jvp_additivity(step_fn, point, seed)
 
     out = {
         "approximation": tag,
@@ -181,6 +200,7 @@ def diagnose_point(
         "tr_B_DPhi_n_over_N": sFeed["mean"] / n_fine,
         "tr_Fu_over_N": quot(sA["mean"], n_fine),
         "tr_DFz_over_N": sDB["mean"] / (n_fine * dt),
+        "tr_B_DPhi_n_quot": sFeed["mean"] / (n_fine * dt),
         "tr_Heff_over_N": quot(sJ["mean"], n_fine),
         "tr_Sigma_over_M": quot(sS["mean"], n_coarse),
         "composition_rel_mean": sComp["mean"],
@@ -211,11 +231,21 @@ def diagnose_point(
 
 def _apply_S(step_fn, point, w, ds, eps_rel, tangent, norm):
     """S w, with D Phi' at u_{n+1}. Proxy uses D."""
-    Bw, Kw = fd_both_z(step_fn, point, w, eps_rel)
+    Bw, Kw = jvp_both_z(step_fn, point, w, eps_rel)
     if is_proxy(tangent):
         correction = apply_D(Bw, ds)
     else:
-        correction = apply_D(_phi_image(tangent, point.u_next, Bw, norm), ds)
+        correction = apply_D(
+            _phi_image(
+                tangent,
+                point.u_next,
+                Bw,
+                norm,
+                dns=getattr(point, "dns_next", None),
+                hats=getattr(point, "hats_next", None),
+            ),
+            ds,
+        )
     return Kw - correction
 
 
@@ -240,65 +270,71 @@ def rho_S(step_fn, point, ds, eps_rel, tangent, norm, ncv, maxiter, tol, seed, f
     A passing network epsilon sweep does not certify this result.
     """
     n = int(point.z.numel())
-    tag = "proxy" if is_proxy(tangent) else "py2d_fd"
+    tag = "proxy" if is_proxy(tangent) else "py2d_jvp"
     add_rel = s_additivity_rel(step_fn, point, ds, eps_rel, tangent, norm, seed)
+    empty = {
+        "value_real": float("nan"),
+        "value_imag": 0.0,
+        "radius": float("nan"),
+        "residual": float("nan"),
+        "converged": False,
+        "approximation": tag,
+        "s_additivity_rel": add_rel,
+        "spectral_validated": False,
+    }
     if not (add_rel <= float(fd_tol)):
-        return {
-            "value_real": float("nan"),
-            "value_imag": 0.0,
-            "radius": float("nan"),
-            "converged": False,
-            "error": (
-                f"S additivity residual {add_rel} exceeds fd_tol {fd_tol}; "
-                "Arnoldi skipped"
-            ),
-            "approximation": tag,
-            "s_additivity_rel": add_rel,
-            "spectral_validated": False,
-        }
+        empty["error"] = (
+            f"S additivity residual {add_rel} exceeds fd_tol {fd_tol}; "
+            "Arnoldi skipped"
+        )
+        return empty
 
     def matvec(v_np: np.ndarray) -> np.ndarray:
-        w = _as_image(v_np, point.z)
-        return _apply_S(step_fn, point, w, ds, eps_rel, tangent, norm).detach().reshape(-1).float().cpu().numpy()
+        w = _as_image(np.asarray(v_np, dtype=np.float64), point.z)
+        out = _apply_S(step_fn, point, w, ds, eps_rel, tangent, norm)
+        return out.detach().reshape(-1).cpu().numpy().astype(np.float64, copy=False)
 
     ncv_eff = min(max(int(ncv), 2), n - 1)
     if ncv_eff < 2:
-        return {
-            "value_real": float("nan"),
-            "value_imag": 0.0,
-            "radius": float("nan"),
-            "converged": False,
-            "error": f"state dim {n} is too small for ARPACK",
-            "approximation": tag,
-            "s_additivity_rel": add_rel,
-            "spectral_validated": False,
-        }
-    op = spla.LinearOperator((n, n), matvec=matvec, dtype=np.float32)
+        empty["error"] = f"state dim {n} is too small for ARPACK"
+        return empty
+    op = spla.LinearOperator((n, n), matvec=matvec, dtype=np.float64)
     rng = np.random.default_rng(seed)
-    v0 = rng.standard_normal(n).astype(np.float32)
+    v0 = rng.standard_normal(n).astype(np.float64)
     v0 /= np.linalg.norm(v0)
     converged = True
+    vec = None
     try:
-        vals = spla.eigs(
+        vals, vecs = spla.eigs(
             op, k=1, which="LM", ncv=ncv_eff, maxiter=maxiter, tol=tol, v0=v0,
-            return_eigenvectors=False,
+            return_eigenvectors=True,
         )
         val = complex(vals[0])
+        vec = np.asarray(vecs[:, 0], dtype=np.complex128)
     except Exception as exc:
         converged = False
         val = complex("nan")
         err = f"{type(exc).__name__}: {exc}"
     else:
         err = ""
+    residual = float("nan")
+    if vec is not None and np.isfinite(val):
+        image = matvec(np.real(vec)) + 1j * matvec(np.imag(vec))
+        residual = float(
+            np.linalg.norm(image - val * vec) / max(np.linalg.norm(vec), 1e-30)
+        )
+    residual_tol = max(float(fd_tol), float(tol))
+    residual_ok = bool(np.isfinite(residual) and residual <= residual_tol)
     return {
         "value_real": float(np.real(val)),
         "value_imag": float(np.imag(val)),
         "radius": float(abs(val)) if np.isfinite(val) else float("nan"),
+        "residual": residual,
         "converged": converged,
         "error": err,
         "approximation": tag,
         "s_additivity_rel": add_rel,
-        "spectral_validated": bool(converged),
+        "spectral_validated": bool(converged and residual_ok),
     }
 
 
@@ -313,6 +349,7 @@ def flat_diag(diag: dict) -> dict[str, np.ndarray]:
         "tr_B_DPhi_n_over_N",
         "tr_Fu_over_N",
         "tr_DFz_over_N",
+        "tr_B_DPhi_n_quot",
         "tr_Heff_over_N",
         "tr_Sigma_over_M",
         "composition_rel_mean",
@@ -346,5 +383,6 @@ def flat_diag(diag: dict) -> dict[str, np.ndarray]:
         out["rho_S_real"] = np.asarray(diag["rho_S"]["value_real"])
         out["rho_S_imag"] = np.asarray(diag["rho_S"]["value_imag"])
         out["rho_S_converged"] = np.asarray(diag["rho_S"]["converged"])
+        out["rho_S_residual"] = np.asarray(diag["rho_S"].get("residual", np.nan))
     out["approximation"] = np.asarray(diag["approximation"])
     return out

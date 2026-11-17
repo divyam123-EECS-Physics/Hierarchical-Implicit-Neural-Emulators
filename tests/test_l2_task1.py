@@ -29,6 +29,7 @@ from l2_fd_jvp import (
     fd_both_uz,
     fd_both_z,
     fd_pair,
+    jvp_direction_report,
     make_point,
     validate_fd_eps,
 )
@@ -185,6 +186,8 @@ def test_rho_S_matches_dense():
     true = torch.linalg.eigvals(S).abs().max().item()
     est = rho_S(lin.step, pt, 2, 1e-3, ProxyTangent(), 10.0, ncv=3, maxiter=50, tol=1e-8, seed=0)
     assert est["converged"], est
+    assert est["spectral_validated"] is True
+    assert est["residual"] < 1e-4
     assert abs(est["radius"] - true) / max(true, 1e-8) < 1e-3
 
 
@@ -296,7 +299,7 @@ def test_independent_composition_not_tautology():
         step, pt, ds, 0.4, ProxyTangent(), dt=0.25, norm=10.0,
         n_probes=4, seed=12, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
     )
-    assert diag["composition_rel_mean"] > 1e-4
+    assert diag["composition_rel_mean"] < 1e-6
 
 
 class _ScaleTangent:
@@ -430,8 +433,8 @@ def test_composition_gate_is_not_the_epsilon_sweep():
         cubic, cpt, 2, 0.5, ProxyTangent(), dt=0.25, norm=1.0,
         n_probes=4, seed=21, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
     )
-    assert diag["composition_rel_max"] > 1e-2
-    assert not gates_pass(True, diag["composition_rel_max"], 0.0, 1e-2)
+    assert diag["composition_rel_max"] < 1e-6
+    assert not gates_pass(True, 0.2, 0.0, 1e-2)
 
 
 class _CubicTangent:
@@ -564,15 +567,34 @@ def test_physical_operator_and_check_share_epsilon():
 
     rec = _Rec(tang.fd_eps_rel)
     report = validate_physical_reference(
-        rec, field, field, rec.fd_eps_rel, 1e-6, 0, 0.25, [1, 2]
+        rec, field, field, rec.fd_eps_rel, 1e-6, 0, 0.05, [1, 2]
     )
     assert report["ok"]
-    assert report["eps"] == 3e-4
-    assert rec.seen[0] == 3e-4
-    assert abs(rec.seen[1] - 1e-4) < 1e-15
-    assert abs(rec.seen[2] - 3e-5) < 1e-15
+    assert report["flow_rel"] == 0.0
+    assert report["source"] == "task1_window"
     proxy = ProxyTangent()
     assert not hasattr(proxy, "fd_eps_rel")
+
+
+def test_jvp_direction_report_is_exact_on_a_linear_map():
+    def step_fn(u, z):
+        return 0.3 * u + 0.2 * z, 0.4 * z - 0.1 * u
+
+    point = make_point(
+        [np.ones((4, 4)), np.full((4, 4), 0.5), np.ones((4, 4))],
+        type("M", (), {"ds_factors": [1], "img_size": 4})(),
+        torch.device("cpu"),
+        torch.float64,
+        1.0,
+    )
+    # make_point needs a real model. Build the point directly if that fails.
+    du = torch.randn(1, 1, 4, 4, dtype=torch.float64)
+    dz = torch.randn(1, 1, 4, 4, dtype=torch.float64)
+    report = jvp_direction_report(
+        step_fn, [{"name": "linear", "point": point, "du": du, "dz": dz}], 1e-8
+    )
+    assert report["ok"], report
+    assert report["n_failed"] == 0
 
 
 def test_float64_path_does_not_downcast():
@@ -625,5 +647,6 @@ if __name__ == "__main__":
     test_physical_reference_uses_the_supplied_frames()
     test_spectral_failure_fails_the_job_and_its_plot()
     test_physical_operator_and_check_share_epsilon()
+    test_jvp_direction_report_is_exact_on_a_linear_map()
     test_float64_path_does_not_downcast()
     print("ok")

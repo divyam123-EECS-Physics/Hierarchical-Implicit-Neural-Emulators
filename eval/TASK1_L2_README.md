@@ -5,10 +5,12 @@ Runner: `eval/eval_l2_stability_task1.py`.
 The network stays the trained direct-step map `ema_vit(u, [z], t=1) -> (g, h)`.
 Nothing is rewritten as Euler. Difference-quotient names (`F_u`, `H_eff`, `Sigma`)
 are `(block - I) / dt` labels so they can sit next to the step-size deck.
-`dt` defaults to 0.25 (five snapshots at 0.05).
+`dt` defaults to 0.05, one kept frame. The runner checks the `time` value
+stored in each eval mat and aborts if consecutive frames are not `--dt` apart.
 
-Jacobian actions are centered finite differences. `torch.autograd.functional.jvp`
-is not used. `D` is `avg_pool2d` with the checkpoint's `ds_factors[0]` (8 for
+Network blocks are `torch.autograd.functional.jvp` in float64. The physical
+tangent is `jax.jvp` of the 512 DNS advance, embedded and spectrally truncated
+back to the model grid. Centered differences are not the Task 1 operator. `D` is `avg_pool2d` with the checkpoint's `ds_factors[0]` (8 for
 the 256→32 L=2 run). Fields inside the network are `Omega / --norm`. Reported
 error norms are multiplied back by `--norm`.
 
@@ -27,9 +29,9 @@ before the diagnostic windows. `--spectral-radius` runs Arnoldi only after
 otherwise. That spectral flag does not change `fd_validated`, but when
 `--spectral-radius` is requested it fails the job and labels
 `plots/rho_S.png` UNVALIDATED. The other plots follow `fd_validated`.
-`--physical-jvp py2d` builds the tangent at `--fd-eps` and checks that same
-epsilon on the Task 1 frames at their own `nx` and `--dt`. Proxy mode does
-not use that physical epsilon and stores `not_applicable`, not true.
+`--physical-jvp py2d` replays the 512 DNS frame over `--dt` and compares the
+spectrally truncated result with the next Task 1 frame. A residual above
+`--fd-tol` leaves the run unvalidated. Proxy mode stores `not_applicable`.
 
 ## Metric → equation
 

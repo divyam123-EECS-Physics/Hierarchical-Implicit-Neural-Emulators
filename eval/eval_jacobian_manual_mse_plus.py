@@ -32,6 +32,12 @@ from model_plus import FutureINNPlus
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--every-nth-field", type=int, default=5)
+    p.add_argument(
+        "--align",
+        choices=["positional", "mod"],
+        default="positional",
+        help="positional keeps every Nth sorted file. mod matches the training loader (stem %% N == 0).",
+    )
     p.add_argument("--eval-dir", default="/global/homes/d/divyam/TACSLAB/eval")
     p.add_argument(
         "--checkpoint",
@@ -49,7 +55,9 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def load_kept_paths(eval_dir: str, every_nth_field: int) -> list[tuple[int, str]]:
+def load_kept_paths(
+    eval_dir: str, every_nth_field: int, align: str = "positional"
+) -> list[tuple[int, str]]:
     numbered: list[tuple[int, str]] = []
     for path in glob.glob(os.path.join(eval_dir, "*.mat")):
         try:
@@ -57,6 +65,10 @@ def load_kept_paths(eval_dir: str, every_nth_field: int) -> list[tuple[int, str]
         except ValueError:
             continue
     numbered.sort(key=lambda item: item[0])
+    if align == "mod":
+        return [(stem, path) for stem, path in numbered if stem % every_nth_field == 0]
+    if align != "positional":
+        raise ValueError(f"align must be positional or mod, got {align}")
     return numbered[::every_nth_field]
 
 
@@ -298,7 +310,7 @@ def main() -> None:
         f"latent_res={model.latent_res} n_steps={n_steps} device={device}"
     )
 
-    kept = load_kept_paths(args.eval_dir, args.every_nth_field)
+    kept = load_kept_paths(args.eval_dir, args.every_nth_field, args.align)
     n_available = len(kept) // args.horizon
     if n_available < 1:
         raise ValueError(
@@ -308,6 +320,7 @@ def main() -> None:
     chosen = choose_sections(n_available, args.n_initial_conditions)
     trajectories = load_trajectories(kept, chosen, args.horizon)
     print(
+        f"align={args.align} first_stem={kept[0][0]} "
         f"sorted kept={len(kept)} every_{args.every_nth_field}th "
         f"full_sections={n_available} using={len(chosen)}"
     )

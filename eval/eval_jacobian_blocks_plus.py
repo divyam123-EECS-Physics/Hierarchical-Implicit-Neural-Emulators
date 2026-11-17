@@ -167,7 +167,7 @@ def compute_block_spectrum_plus(
     def rmatvec(w_np: np.ndarray) -> np.ndarray:
         w = torch.from_numpy(np.ascontiguousarray(w_np)).to(
             device=levels["U"].device, dtype=dtype
-        )
+        ).reshape(-1)
         _, vjp = torch.autograd.functional.vjp(
             forward_selected, primals, w
         )

@@ -13,7 +13,15 @@ import math
 import numpy as np
 import torch
 
-from l2_fd_jvp import FD_OUTPUT_FLOOR, L2Point, apply_D, fd_both_uz, fd_both_z, model_step
+from l2_fd_jvp import (
+    FD_OUTPUT_FLOOR,
+    L2Point,
+    apply_D,
+    fd_both_uz,
+    jvp_both_uz,
+    jvp_both_z,
+    model_step,
+)
 from l2_operators import _phi_image
 from l2_physical_jvp import is_proxy
 
@@ -79,6 +87,7 @@ _FINE_COS = (
 _LATENT_COS = (
     "cos_eta_inj",
     "cos_eta_eta_lin",
+    "cos_e_e_lin",
 )
 
 
@@ -149,6 +158,8 @@ def running_channels(
             cos["cos_eta_inj"][n] = _cos(eta[n], Z)
             if eta_lin is not None:
                 cos["cos_eta_eta_lin"][n] = _cos(eta[n], eta_lin[n])
+        if e_lin is not None:
+            cos["cos_e_e_lin"][n] = _cos(e[n], e_lin[n])
         if n == t:
             break
         rH = rH + apply_J_minus_I(n, S)
@@ -187,9 +198,9 @@ def propagate_augmented(step_at, points: list[L2Point], eps_u, eps_z, eps_rel: f
             dg = torch.zeros_like(e_lin[n])
             dh = torch.zeros_like(eta_lin[n])
         else:
-            dg, dh = fd_both_uz(step_at(n), pt, e_lin[n], eta_lin[n], eps_rel)
-        e_lin.append(dg + eps_u[n])
-        eta_lin.append(dh + eps_z[n])
+            dg, dh = jvp_both_uz(step_at(n), pt, e_lin[n], eta_lin[n], eps_rel)
+        e_lin.append((dg + eps_u[n]).detach())
+        eta_lin.append((dh + eps_z[n]).detach())
     return e_lin, eta_lin
 
 
@@ -265,7 +276,11 @@ def validation_directions(points, eps_u, xi, e_lin, eta_lin, tangent, ds: int, n
         s_n, z_n = states[n]
         pt = points[n]
         if _norm(s_n) > 0.0:
-            image = _phi_image(tangent, pt.u, s_n, norm)
+            image = _phi_image(
+                tangent, pt.u, s_n, norm,
+                dns=getattr(pt, "dns", None),
+                hats=getattr(pt, "hats", None),
+            )
             out.append(
                 {
                     "name": f"rH_step{n}",
@@ -295,7 +310,6 @@ def validation_directions(points, eps_u, xi, e_lin, eta_lin, tangent, ds: int, n
     return out
 
 
-@torch.no_grad()
 def rollout_diagnostics(
     ema_vit,
     frames: list[np.ndarray],
@@ -307,6 +321,7 @@ def rollout_diagnostics(
     tangent,
     n_steps: int,
     direction_sink: list | None = None,
+    stems: list[int] | None = None,
 ) -> dict[str, np.ndarray]:
     """Free AR rollout plus teacher-forced injections on one window.
 
@@ -323,6 +338,15 @@ def rollout_diagnostics(
         from l2_fd_jvp import make_point
 
         pt = make_point(frames[k : k + 3], model, device, dtype, norm)
+        if stems is not None and not is_proxy(tangent):
+            from l2_physical_jvp import load_dns_frame
+
+            now = load_dns_frame(stems[k])
+            nxt = load_dns_frame(stems[k + 1])
+            pt.dns = now["omega"]
+            pt.hats = now["hats"]
+            pt.dns_next = nxt["omega"]
+            pt.hats_next = nxt["hats"]
         points.append(pt)
 
     # Teacher-forced injections, model coordinates.
@@ -331,12 +355,16 @@ def rollout_diagnostics(
     xi = []
     for pt in points:
         g, h = model_step(ema_vit, pt.u, pt.z, pt.t)
-        eu = g - pt.u_next
-        ez = h - pt.z_next
+        eu = (g - pt.u_next).detach()
+        ez = (h - pt.z_next).detach()
         if is_proxy(tangent):
             xi_k = ez - apply_D(eu, ds)
         else:
-            img = _phi_image(tangent, pt.u_next, eu, norm)
+            img = _phi_image(
+                tangent, pt.u_next, eu, norm,
+                dns=getattr(pt, "dns_next", None),
+                hats=getattr(pt, "hats_next", None),
+            )
             xi_k = ez - apply_D(img, ds)
         eps_u.append(eu)
         eps_z.append(ez)
@@ -349,6 +377,8 @@ def rollout_diagnostics(
     eta = [torch.zeros_like(z)]
     for k in range(n_steps):
         high, z = model_step(ema_vit, high, z, points[k].t)
+        high = high.detach()
+        z = z.detach()
         e.append(high - points[k].u_next)
         eta.append(z - points[k].z_next)
 
@@ -364,8 +394,12 @@ def rollout_diagnostics(
     def apply_J_minus_I(k: int, vec: torch.Tensor) -> torch.Tensor:
         if _norm(vec) == 0.0:
             return torch.zeros_like(vec)
-        v_for_z = _phi_image(tangent, points[k].u, vec, norm)
-        Jv, _ = fd_both_uz(
+        v_for_z = _phi_image(
+            tangent, points[k].u, vec, norm,
+            dns=getattr(points[k], "dns", None),
+            hats=getattr(points[k], "hats", None),
+        )
+        Jv, _ = jvp_both_uz(
             lambda u, z: model_step(ema_vit, u, z, points[k].t),
             points[k],
             vec,
@@ -377,7 +411,7 @@ def rollout_diagnostics(
     def apply_B(k: int, w: torch.Tensor) -> torch.Tensor:
         if _norm(w) == 0.0:
             return torch.zeros_like(e[0])
-        Bw, _Kw = fd_both_z(
+        Bw, _Kw = jvp_both_z(
             lambda u, z: model_step(ema_vit, u, z, points[k].t),
             points[k],
             w,
@@ -410,6 +444,8 @@ def rollout_diagnostics(
     out["eta_lin_norm"] = np.asarray([_norm(t) for t in eta_lin_phys])
     out["e_lin_err"] = np.asarray([_norm(a - b) for a, b in zip(e_phys, e_lin_phys)])
     out["eta_lin_err"] = np.asarray([_norm(a - b) for a, b in zip(eta_phys, eta_lin_phys)])
-    out["approximation"] = np.asarray("proxy" if is_proxy(tangent) else "py2d_fd")
+    out["e_lin_rel"] = relative_residual(out["e_lin_err"], out["e_norm"])
+    out["eta_lin_rel"] = relative_residual(out["eta_lin_err"], out["eta_norm"])
+    out["approximation"] = np.asarray("proxy" if is_proxy(tangent) else "py2d_jvp")
     out["first_factor"] = np.asarray("truncated")
     return out

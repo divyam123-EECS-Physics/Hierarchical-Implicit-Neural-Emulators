@@ -40,7 +40,18 @@ def parse_args() -> argparse.Namespace:
         "--every-nth-field",
         type=int,
         default=5,
-        help="After sorting by integer stem, keep every Nth file by position",
+        help="Stride used with --align. positional: every Nth file. mod: stem %% N == 0.",
+    )
+    p.add_argument(
+        "--align",
+        choices=["positional", "mod"],
+        default="positional",
+        help="positional keeps file order ::N. mod keeps stems divisible by N.",
+    )
+    p.add_argument(
+        "--skip-fields",
+        action="store_true",
+        help="Skip per-section field PNGs; still write rollout_mse.npz and mse_vs_lead.png",
     )
     p.add_argument(
         "--eval-dir",
@@ -243,7 +254,7 @@ def main() -> None:
     fields_dir = os.path.join(args.save_dir, "fields")
     os.makedirs(fields_dir, exist_ok=True)
 
-    kept = load_kept_paths(args.eval_dir, args.every_nth_field)
+    kept = load_kept_paths(args.eval_dir, args.every_nth_field, args.align)
     n_available = len(kept) // args.horizon
     if n_available < 1:
         raise ValueError(
@@ -253,6 +264,7 @@ def main() -> None:
     chosen = choose_sections(n_available, args.n_initial_conditions)
     trajectories = load_trajectories(kept, chosen, args.horizon)
     print(
+        f"align={args.align} first_stem={kept[0][0]} "
         f"sorted kept={len(kept)} every_{args.every_nth_field}th "
         f"full_sections={n_available} using={len(chosen)} "
         f"section_index={chosen.tolist()}"
@@ -332,27 +344,28 @@ def main() -> None:
         f"lead1 high AR {ar_mse_high[:, 0].mean():.4g} TF {tf_mse_high[:, 0].mean():.4g}"
     )
 
-    plot_leads = [0, n_leads // 2, n_leads - 1]
-    for b in range(ar_mse_high.shape[0]):
-        for k in plot_leads:
-            fig = field_figure(
-                b,
-                k,
-                chosen,
-                lead,
-                target_stem,
-                ar_pred_high,
-                tf_pred_high,
-                gt_high,
-            )
-            fig.savefig(
-                os.path.join(fields_dir, f"b{b:03d}_lead{int(lead[k]):03d}.png"),
-                dpi=120,
-            )
-            plt.close(fig)
+    if not args.skip_fields:
+        plot_leads = [0, n_leads // 2, n_leads - 1]
+        for b in range(ar_mse_high.shape[0]):
+            for k in plot_leads:
+                fig = field_figure(
+                    b,
+                    k,
+                    chosen,
+                    lead,
+                    target_stem,
+                    ar_pred_high,
+                    tf_pred_high,
+                    gt_high,
+                )
+                fig.savefig(
+                    os.path.join(fields_dir, f"b{b:03d}_lead{int(lead[k]):03d}.png"),
+                    dpi=120,
+                )
+                plt.close(fig)
+        print(f"wrote fields under {fields_dir}")
 
     mse_plot = plot_mse_curves(args.save_dir, lead, ar_mse_high, tf_mse_high)
-    print(f"wrote fields under {fields_dir}")
     print(f"wrote {mse_plot}")
     print("FNO_JACOBIAN_MANUAL_MSE_DONE")
 

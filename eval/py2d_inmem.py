@@ -242,6 +242,44 @@ class Py2DInMemory:
         state = self.advance_state(self.startup(omega_phys), n)
         return self.to_phys(state)
 
+    def jvp_physical(self, omega_phys: np.ndarray, v_phys: np.ndarray, interval: float, hats=None) -> np.ndarray:
+        """jax.jvp of the same advance used for a physical replay.
+
+        Without hats, the primal is the single-field startup. With hats, omega0
+        stays the saved hat and the physical field replaces omega1.
+        """
+        n = steps_for(self.cfg.dt_dns, interval)
+        nx = int(self.cfg.nx)
+        omega = self.jnp.asarray(np.asarray(omega_phys, dtype=np.float64))
+        direction = self.jnp.asarray(np.asarray(v_phys, dtype=np.float64))
+        if omega.shape != (nx, nx) or direction.shape != (nx, nx):
+            raise ValueError(f"jvp fields must be {(nx, nx)}")
+        saved0 = None
+        if hats is not None:
+            saved0 = self.jnp.asarray(np.asarray(hats[0]))
+
+        def flow(field):
+            hat = self.jnp.fft.rfft2(field)
+            if saved0 is None:
+                psi = self._psi(hat, self.invKsq)
+                vel_u, vel_v = self._uv(psi, self.Kx, self.Ky)
+                convec = self._conv(hat, vel_u, vel_v, self.Kx, self.Ky)
+                state = (hat, hat, convec)
+            else:
+                psi0 = self._psi(saved0, self.invKsq)
+                vel_u, vel_v = self._uv(psi0, self.Kx, self.Ky)
+                convec = self._conv(saved0, vel_u, vel_v, self.Kx, self.Ky)
+                state = (saved0, hat, convec)
+
+            def body(s, _):
+                return self._step_pure(s), None
+
+            state, _ = self.jax.lax.scan(body, state, None, length=int(n))
+            return self.jnp.fft.irfft2(state[1], s=(nx, nx))
+
+        _prim, tang = self.jax.jvp(flow, (omega,), (direction,))
+        return np.asarray(tang, dtype=np.float64)
+
     def advance_conditional(self, omega_phys, coarse_path, projector, interval: float) -> np.ndarray:
         """Unrestricted microsteps with the coarse part replaced after every step.
 

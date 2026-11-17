@@ -134,12 +134,105 @@ def lock_precision() -> dict:
     }
 
 
-@torch.no_grad()
 def model_step(ema_vit: torch.nn.Module, u: torch.Tensor, z: torch.Tensor, t: torch.Tensor):
+    """Network step. Gradients stay enabled so a JVP can differentiate it."""
     if torch.is_autocast_enabled():
-        raise RuntimeError("Task 1 finite differences require autocast to be off")
+        raise RuntimeError("Task 1 Jacobians require autocast to be off")
     high, coarses = ema_vit(u, [z], t)
     return high, coarses[0]
+
+
+def jvp_pair(step_fn, u, z, du, dz):
+    """Exact autograd JVP of step_fn(u, z) -> (g, h). A zero direction returns zeros."""
+    if float(du.detach().reshape(-1).double().norm()) == 0.0 and float(
+        dz.detach().reshape(-1).double().norm()
+    ) == 0.0:
+        return torch.zeros_like(u), torch.zeros_like(z)
+
+    def f(uu, zz):
+        return step_fn(uu, zz)
+
+    _primals, tangents = torch.autograd.functional.jvp(f, (u, z), (du, dz))
+    return tangents[0], tangents[1]
+
+
+def jvp_both_u(step_fn, point: L2Point, v: torch.Tensor, eps_rel: float = 0.0):
+    """(A v, C v) from one autograd JVP. eps_rel is unused."""
+    del eps_rel
+    return jvp_pair(step_fn, point.u, point.z, v, torch.zeros_like(point.z))
+
+
+def jvp_both_z(step_fn, point: L2Point, w: torch.Tensor, eps_rel: float = 0.0):
+    """(B w, K w) from one autograd JVP. eps_rel is unused."""
+    del eps_rel
+    return jvp_pair(step_fn, point.u, point.z, torch.zeros_like(point.u), w)
+
+
+def jvp_both_uz(step_fn, point: L2Point, v: torch.Tensor, w: torch.Tensor, eps_rel: float = 0.0):
+    """((A v + B w), (C v + K w)) from one autograd JVP. eps_rel is unused."""
+    del eps_rel
+    return jvp_pair(step_fn, point.u, point.z, v, w)
+
+
+def jvp_additivity(step_fn, point: L2Point, seed: int) -> dict:
+    """Relative residual of J(v1+v2) - J(v1) - J(v2). A true JVP is linear."""
+    gen = _generator(seed, point.u)
+    v1 = _rand_like(point.u, gen)
+    z1 = _rand_like(point.z, gen)
+    v2 = _rand_like(point.u, gen)
+    z2 = _rand_like(point.z, gen)
+    ag, ah = jvp_pair(step_fn, point.u, point.z, v1, z1)
+    bg, bh = jvp_pair(step_fn, point.u, point.z, v2, z2)
+    sg, sh = jvp_pair(step_fn, point.u, point.z, v1 + v2, z1 + z2)
+    num = _enorm(torch.cat([(sg - ag - bg).reshape(-1), (sh - ah - bh).reshape(-1)]))
+    den = max(_enorm(torch.cat([sg.reshape(-1), sh.reshape(-1)])), FD_OUTPUT_FLOOR)
+    return {"rel": num / den, "seed": int(seed)}
+
+
+def jvp_direction_report(step_fn, directions: list, tol: float) -> dict:
+    """Additivity and separate composition on the supplied directions.
+
+    Each item has point, du, dz, and name. Composition compares one mixed
+    JVP with the sum of a fine-only JVP and a latent-only JVP.
+    """
+    checks = []
+    for item in directions:
+        point = item["point"]
+        du = item["du"]
+        dz = item["dz"]
+        jg, jh = jvp_both_uz(step_fn, point, du, dz)
+        ag, _ah = jvp_both_u(step_fn, point, du)
+        bg, _bh = jvp_both_z(step_fn, point, dz)
+        comp = _rel_change(jg, ag + bg)
+        half_g, half_h = jvp_both_uz(step_fn, point, 0.5 * du, 0.5 * dz)
+        add = _rel_change(jg, 2.0 * half_g)
+        add_h = _rel_change(jh, 2.0 * half_h)
+        for block, rel, kind in (
+            ("g", comp, "composition"),
+            ("g", add, "additivity"),
+            ("h", add_h, "additivity"),
+        ):
+            checks.append(
+                {
+                    "name": item["name"],
+                    "block": block,
+                    "against": kind,
+                    "rel": rel,
+                    "ok": bool(rel <= tol),
+                }
+            )
+    ok = all(c["ok"] for c in checks) if checks else True
+    worst = max(checks, key=lambda c: c["rel"]) if checks else None
+    return {
+        "working_eps": None,
+        "tol": float(tol),
+        "ok": ok,
+        "n_checks": len(checks),
+        "n_failed": sum(1 for c in checks if not c["ok"]),
+        "worst": worst,
+        "checks": checks,
+        "derivative": "torch.autograd.functional.jvp",
+    }
 
 
 def _enorm(x: torch.Tensor) -> float:

@@ -38,7 +38,13 @@ def parse_args() -> argparse.Namespace:
         "--every-nth-field",
         type=int,
         default=5,
-        help="After sorting by integer stem, keep every Nth file by position",
+        help="Stride used with --align. positional: every Nth file. mod: stem %% N == 0.",
+    )
+    p.add_argument(
+        "--align",
+        choices=["positional", "mod"],
+        default="positional",
+        help="positional keeps every Nth sorted file. mod matches the training loader (stem %% N == 0).",
     )
     p.add_argument(
         "--eval-dir",
@@ -166,7 +172,7 @@ def main() -> None:
     )
     os.makedirs(save_dir, exist_ok=True)
 
-    kept = load_kept_paths(args.eval_dir, args.every_nth_field)
+    kept = load_kept_paths(args.eval_dir, args.every_nth_field, args.align)
     n_available = len(kept) // args.horizon
     if n_available < 1:
         raise ValueError(
@@ -176,6 +182,7 @@ def main() -> None:
     chosen = choose_sections(n_available, args.n_initial_conditions)
     trajectories = load_trajectories(kept, chosen, args.horizon)
     print(
+        f"align={args.align} first_stem={kept[0][0]} "
         f"sorted kept={len(kept)} every_{args.every_nth_field}th "
         f"full_sections={n_available} using={len(chosen)}"
     )
@@ -191,6 +198,14 @@ def main() -> None:
     lead = np.arange(1, n_steps + 1)
 
     pred, mse = rollout_ar(ema_vit, frames, args.batch_size, n_steps, device)
+    n_frames = frames.shape[1]
+    file_stem = np.zeros((frames.shape[0], n_frames), dtype=np.int64)
+    for b, block in enumerate(chosen):
+        start = int(block) * args.horizon
+        for k in range(n_frames):
+            file_stem[b, k] = kept[start + k][0]
+    target_stem = file_stem[:, 1 : n_steps + 1]
+    gt_high = frames[:, 1 : n_steps + 1, None, :, :]
     np.savez_compressed(
         os.path.join(save_dir, "ablation_mse.npz"),
         lead=lead,
@@ -199,8 +214,20 @@ def main() -> None:
         chosen=chosen,
         ablation=np.array(model.ablation),
     )
+    np.savez_compressed(
+        os.path.join(save_dir, "rollout_mse.npz"),
+        ar_pred_high=pred,
+        gt_high=gt_high,
+        file_stem=file_stem,
+        target_stem=target_stem,
+        lead=lead,
+        chosen=np.asarray(chosen),
+        horizon=np.asarray(args.horizon, dtype=np.int64),
+        every_nth_field=np.asarray(args.every_nth_field, dtype=np.int64),
+        norm=np.asarray(args.norm, dtype=np.float64),
+    )
     curve = plot_mse_curve(save_dir, lead, mse)
-    print(f"saved {save_dir}/ablation_mse.npz and {curve}")
+    print(f"saved {save_dir}/ablation_mse.npz {save_dir}/rollout_mse.npz and {curve}")
     print(
         "mse mean@leads:",
         {int(lead[i]): float(mse[:, i].mean()) for i in (0, min(4, n_steps - 1), n_steps - 1)},

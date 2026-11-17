@@ -81,16 +81,17 @@ from eval_jacobian_manual_mse import load_kept_paths
 from eval_jacobian_manual_mse_plus import load_model
 from l2_fd_jvp import (
     DEFAULT_EPS_LIST,
+    FD_OUTPUT_FLOOR,
     FD_SCALING,
     apply_D,
     assert_l2,
+    jvp_direction_report,
     make_point,
     model_step,
-    validate_fd_eps,
 )
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth
-from l2_physical_jvp import make_tangent, validate_physical_reference
-from l2_retention import rollout_diagnostics
+from l2_physical_jvp import load_dns_frame, make_tangent, validate_physical_reference
+from l2_retention import relative_residual, rollout_diagnostics
 
 
 DIAG_KEYS = [
@@ -101,8 +102,9 @@ DIAG_KEYS = [
     "tr_DB_over_N",
     "tr_B_DPhi_n_over_N",
     "tr_Fu_over_N",
-    "tr_DFz_over_N",
-    "tr_Heff_over_N",
+        "tr_DFz_over_N",
+        "tr_B_DPhi_n_quot",
+        "tr_Heff_over_N",
     "tr_Sigma_over_M",
     "composition_rel_mean",
     "composition_rel_max",
@@ -139,7 +141,7 @@ DIAG_KEYS = [
     "tr_S_probes",
     "amp_J_probes",
 ]
-RHO_KEYS = ["rho_S", "rho_S_real", "rho_S_imag", "rho_S_converged"]
+RHO_KEYS = ["rho_S", "rho_S_real", "rho_S_imag", "rho_S_converged", "rho_S_residual"]
 ROLL_KEYS = (
     "I",
     "R",
@@ -167,7 +169,10 @@ ROLL_KEYS = (
     "eta_lin_norm",
     "e_lin_err",
     "eta_lin_err",
+    "e_lin_rel",
+    "eta_lin_rel",
     "recon_lin_norm",
+    "cos_e_e_lin",
 )
 
 
@@ -202,7 +207,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     p.add_argument("--physical-jvp", choices=["proxy", "py2d"], default="proxy")
     p.add_argument("--spectral-radius", action="store_true")
-    p.add_argument("--dt", type=float, default=0.25, help="Emulator step in time units")
+    p.add_argument("--dt", type=float, default=0.05, help="Emulator step in time units")
+    p.add_argument(
+        "--sample-index",
+        default="",
+        help="Reuse windows from this sample_index.json instead of drawing new ones",
+    )
     p.add_argument("--norm", type=float, default=10.0)
     p.add_argument("--every-nth-field", type=int, default=5)
     p.add_argument("--model-dtype", choices=["float32", "float64"], default="float32")
@@ -238,20 +248,50 @@ def _hash_module(mod: torch.nn.Module) -> str:
     return h.hexdigest()
 
 
+def _mat_frame(path: str) -> tuple[np.ndarray, float]:
+    raw = scipy.io.loadmat(path)
+    omega = raw["Omega"]
+    if "time" not in raw:
+        raise RuntimeError(f"{path} has no time value; refusing to infer spacing from the filename")
+    return omega, float(np.asarray(raw["time"]).reshape(-1)[0])
+
+
+def _check_spacing(times: list[float], dt: float, label: str) -> None:
+    for left, right in zip(times, times[1:]):
+        gap = float(right) - float(left)
+        if abs(gap - float(dt)) > 1e-6:
+            raise RuntimeError(f"{label} frame spacing {gap} != --dt {dt}")
+
+
 def _load_window(kept, start: int, length: int) -> tuple[list[np.ndarray], list[int]]:
     frames = []
     stems = []
     for j in range(length):
         stem, path = kept[start + j]
-        frames.append(scipy.io.loadmat(path)["Omega"])
+        omega, _time = _mat_frame(path)
+        frames.append(omega)
         stems.append(int(stem))
     return frames, stems
 
 
-def _load_window_from_entry(entry: dict) -> tuple[list[np.ndarray], list[int]]:
-    frames = [scipy.io.loadmat(p)["Omega"] for p in entry["paths"]]
+def _load_window_from_entry(entry: dict) -> tuple[list[np.ndarray], list[int], list[float]]:
+    frames = []
+    times = []
+    for path in entry["paths"]:
+        omega, time = _mat_frame(path)
+        frames.append(omega)
+        times.append(time)
     stems = [int(s) for s in entry["stems"]]
-    return frames, stems
+    return frames, stems, times
+
+
+def _attach_dns(point, stem_now: int, stem_next: int) -> None:
+    now = load_dns_frame(stem_now)
+    nxt = load_dns_frame(stem_next)
+    point.dns = now["omega"]
+    point.hats = now["hats"]
+    point.dns_next = nxt["omega"]
+    point.hats_next = nxt["hats"]
 
 
 def sample_index_path(save_dir: Path) -> Path:
@@ -284,6 +324,31 @@ def write_sample_index(
     }
     sample_index_path(save_dir).write_text(json.dumps(payload, indent=2) + "\n")
     return samples
+
+
+def _select_samples(args, kept, save_dir: Path) -> list[dict]:
+    """Draw windows, or copy a previous sample index when one is given."""
+    window_len = args.rollout_length + 2
+    if args.sample_index:
+        payload = json.loads(Path(args.sample_index).read_text())
+        samples = list(payload["samples"])[: int(args.n_snapshots)]
+        if len(samples) < int(args.n_snapshots):
+            raise ValueError(
+                f"sample index has {len(payload['samples'])} windows, "
+                f"asked for {args.n_snapshots}"
+            )
+        sample_index_path(save_dir).write_text(
+            json.dumps(
+                {"n_samples": len(samples), "window_len": window_len, "samples": samples, "reused_from": args.sample_index},
+                indent=2,
+            )
+            + "\n"
+        )
+        return samples
+    starts = choose_sample_starts(
+        len(kept), args.rollout_length + 1, args.n_snapshots, args.seed
+    )
+    return write_sample_index(save_dir, kept, starts, window_len)
 
 
 class DiagnosticsAborted(RuntimeError):
@@ -432,6 +497,11 @@ def write_plots(
             quotient_halfwidth(diag["tr_DB_ci95"], diag["n_fine"], dt),
             r"Tr$(DB)/(N\,dt)$ proxy",
         ),
+        (
+            diag["tr_B_DPhi_n_quot"],
+            quotient_halfwidth(diag["tr_B_DPhi_n_ci95"], diag["n_fine"], dt),
+            r"Tr$(B D\Phi'_n)/(N\,dt)$ physical",
+        ),
         (diag["tr_Heff_over_N"], None, r"$(Tr J - N)/(N dt)$"),
         (diag["tr_J_over_N"], diag["tr_J_ci95"] / diag["n_fine"], r"Tr$(J)/N$"),
     )
@@ -555,6 +625,99 @@ def write_plots(
     fig.savefig(plot_dir / "retention_alignment.png", dpi=140)
     plt.close(fig)
 
+    def _bundle(ax, series, label):
+        y = np.asarray(series, dtype=np.float64)
+        if y.ndim == 1:
+            y = y[None, :]
+        for row in y:
+            ax.plot(lead, row, color="0.8", lw=0.5)
+        mean = np.nanmean(y, axis=0)
+        std = np.nanstd(y, axis=0)
+        ax.plot(lead, mean, label=label)
+        ax.fill_between(lead, mean - std, mean + std, alpha=0.15)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    _bundle(ax, rolls["rH_norm"], r"$\|r_H\|$ truncated")
+    _bundle(ax, rolls["rZ_norm"], r"$\|r_z\|$ truncated")
+    _bundle(ax, rolls["rho_norm"], r"$\|\rho\|$")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title("Truncated first-factor channels", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "retention_channels.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    _bundle(ax, rolls["recon_norm"], r"$\|\rho-r_H-r_z\|$")
+    if "recon_lin_norm" in rolls:
+        _bundle(ax, rolls["recon_lin_norm"], r"$\|\rho_{lin}-r_H-r_z\|$")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title("Reconstruction residual", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "reconstruction_residual.png", dpi=140)
+    plt.close(fig)
+
+    rel = relative_residual(rolls["recon_norm"], rolls["rho_norm"], FD_OUTPUT_FLOOR)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    _bundle(ax, rel, r"$\|\rho-r_H-r_z\| / \max(\|\rho\|, floor)$")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title("Relative reconstruction residual", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "relative_reconstruction.png", dpi=140)
+    plt.close(fig)
+
+    fig, axes = plt.subplots(2, 2, figsize=(8, 6))
+    _bundle(axes[0, 0], rolls["e_norm"], r"$\|e\|$")
+    _bundle(axes[0, 0], rolls["e_lin_norm"], r"$\|e_{lin}\|$")
+    axes[0, 0].set_title(r"fine $\|e\|$")
+    axes[0, 0].legend(fontsize=8)
+    _bundle(axes[0, 1], rolls["eta_norm"], r"$\|\eta\|$")
+    _bundle(axes[0, 1], rolls["eta_lin_norm"], r"$\|\eta_{lin}\|$")
+    axes[0, 1].set_title(r"latent $\|\eta\|$")
+    axes[0, 1].legend(fontsize=8)
+    _bundle(axes[1, 0], rolls["e_lin_err"], r"$\|e-e_{lin}\|$")
+    _bundle(axes[1, 0], rolls["eta_lin_err"], r"$\|\eta-\eta_{lin}\|$")
+    axes[1, 0].set_title("absolute discrepancy")
+    axes[1, 0].legend(fontsize=8)
+    _bundle(axes[1, 1], rolls["e_lin_rel"], r"$\|e-e_{lin}\|/\|e\|$")
+    _bundle(axes[1, 1], rolls["eta_lin_rel"], r"$\|\eta-\eta_{lin}\|/\|\eta\|$")
+    axes[1, 1].set_title("relative discrepancy")
+    axes[1, 1].legend(fontsize=8)
+    for ax in axes.ravel():
+        ax.set_xlabel("step")
+    fig.suptitle(_title("Actual and linearized errors", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "linearized_error.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    full_cos = (
+        ("cos_rH_rZ", r"$\cos(r_H,r_z)$"),
+        ("cos_e_rho", r"$\cos(e,\rho)$"),
+        ("cos_e_rH", r"$\cos(e,r_H)$"),
+        ("cos_e_rZ", r"$\cos(e,r_z)$"),
+        ("cos_rho_rH", r"$\cos(\rho,r_H)$"),
+        ("cos_rho_rZ", r"$\cos(\rho,r_z)$"),
+        ("cos_e_inj", r"$\cos(e,\mathrm{inj})$"),
+        ("cos_rho_inj", r"$\cos(\rho,\mathrm{inj})$"),
+        ("cos_rH_inj", r"$\cos(r_H,\mathrm{inj})$"),
+        ("cos_rZ_inj", r"$\cos(r_z,\mathrm{inj})$"),
+        ("cos_eta_inj", r"$\cos(\eta,Z)$"),
+        ("cos_eta_eta_lin", r"$\cos(\eta,\eta_{lin})$"),
+        ("cos_e_e_lin", r"$\cos(e,e_{lin})$"),
+    )
+    for key, label in full_cos:
+        _bundle(ax, rolls[key], label)
+    ax.set_ylim(-1.05, 1.05)
+    ax.set_xlabel("step")
+    ax.legend(fontsize=7, ncol=2)
+    ax.set_title(_title("All cosine diagnostics; NaNs stay gaps", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "cosine_all.png", dpi=140)
+    plt.close(fig)
+
 
 def _stack_results(
     diags: list[dict], rolls: list[dict], spectral_radius: bool, dt: float
@@ -612,38 +775,40 @@ def run_windows(
     )
     ds = int(model.ds_factors[0])
 
-    first_frames, _ = _load_window_from_entry(window_entries[0])
-    named_points = [("step0", make_point(first_frames[:3], model, device, dtype, args.norm))]
-    later_k = args.rollout_length - 1
-    if later_k > 0 and len(first_frames) >= later_k + 3:
-        named_points.append(
-            (f"step{later_k}", make_point(first_frames[later_k : later_k + 3], model, device, dtype, args.norm))
-        )
-    first = named_points[0][1]
+    first_frames, first_stems, first_times = _load_window_from_entry(window_entries[0])
+    _check_spacing(first_times, args.dt, "window 0")
+    first = make_point(first_frames[:3], model, device, dtype, args.norm)
     step0 = lambda u, z, _t=first.t: model_step(ema_vit, u, z, _t)
-
-    def graph_w(point, vec, _tangent=tangent, _ds=ds, _norm=args.norm):
-        return apply_D(_phi_image(_tangent, point.u, vec, _norm), _ds)
-
-    sweep = validate_fd_eps(
+    gen = torch.Generator(device=device)
+    gen.manual_seed(int(args.seed))
+    opening = jvp_direction_report(
         step0,
-        named_points,
-        args.fd_eps,
+        [
+            {
+                "name": "step0/fine",
+                "point": first,
+                "du": torch.randn(first.u.shape, device=device, dtype=dtype, generator=gen),
+                "dz": torch.zeros_like(first.z),
+            },
+            {
+                "name": "step0/latent",
+                "point": first,
+                "du": torch.zeros_like(first.u),
+                "dz": torch.randn(first.z.shape, device=device, dtype=dtype, generator=gen),
+            },
+        ],
         args.fd_tol,
-        args.seed,
-        ds,
-        graph_w=graph_w,
     )
+    sweep = opening
     print(
-        f"[fd] working eps={args.fd_eps} ok={sweep['ok']} "
-        f"failed={sweep['n_failed']}/{sweep['n_checks']}",
+        f"[jvp] opening ok={sweep['ok']} failed={sweep['n_failed']}/{sweep['n_checks']}",
         flush=True,
     )
     if not sweep["ok"] and not args.allow_unvalidated_fd:
         worst = sweep.get("worst") or {}
         failed.append(
-            "fd validation failed for the selected eps "
-            f"{args.fd_eps}: {sweep['n_failed']}/{sweep['n_checks']} checks, "
+            "jvp validation failed "
+            f"{sweep['n_failed']}/{sweep['n_checks']} checks, "
             f"worst {worst.get('name')}/{worst.get('block')} "
             f"rel={worst.get('rel')}"
         )
@@ -664,36 +829,56 @@ def run_windows(
 
     physical_flow = None
     if args.physical_jvp == "py2d":
-        physical_eps = float(tangent.fd_eps_rel)
-        if physical_eps != float(args.fd_eps):
-            raise RuntimeError(
-                f"physical tangent epsilon {physical_eps} does not match --fd-eps {args.fd_eps}"
-            )
-        stems0 = window_entries[0]["stems"]
+        dns0 = load_dns_frame(first_stems[0])
+        dns1 = load_dns_frame(first_stems[1])
         physical_flow = validate_physical_reference(
             tangent,
             first_frames[0],
             first_frames[1],
-            physical_eps,
+            args.fd_eps,
             args.fd_tol,
             args.seed,
             args.dt,
-            stems0[:2],
+            first_stems[:2],
+            dns_now=dns0["omega"],
+            dns_next=dns1["omega"],
+            hats=dns0["hats"],
         )
         print(
-            f"[physical] eps={physical_flow['eps']:.4e} "
-            f"flow_rel={physical_flow['flow_rel']:.4e} "
+            f"[physical] task1_replay_rel={physical_flow['flow_rel']:.4e} "
+            f"dns_flow_rel={physical_flow.get('dns_flow_rel')} "
+            f"truncate_base_rel={physical_flow.get('truncate_base_rel')} "
+            f"startup={physical_flow.get('startup')} "
             f"nx={physical_flow['nx']} dt={physical_flow['dt']} "
             f"ok={physical_flow['ok']}",
             flush=True,
         )
+        if not physical_flow["ok"] and not args.allow_unvalidated_fd:
+            failed.append("physical tangent replay failed")
+            raise DiagnosticsAborted(
+                _run_extras(
+                    args, tangent, ds, weight_hash, weight_hash, sweep, failed,
+                    window_entries, global_indices,
+                    model_fd_validated=False,
+                    physical_tangent_validated=False,
+                    spectral_validated="not_requested" if not args.spectral_radius else False,
+                    fd_validated=False,
+                    physical_flow=physical_flow,
+                    aborted_before_diagnostics=True,
+                    num_coarse=int(model.num_coarse),
+                    latent_res=list(model.latent_res),
+                )
+            )
 
     diags: list[dict] = []
     rolls: list[dict] = []
-    for local_i, (entry, gidx) in enumerate(zip(window_entries, global_indices)):
-        frames, stems = _load_window_from_entry(entry)
+    for _local_i, (entry, gidx) in enumerate(zip(window_entries, global_indices)):
+        frames, stems, times = _load_window_from_entry(entry)
+        _check_spacing(times, args.dt, f"snap {gidx}")
         point = make_point(frames[:3], model, device, dtype, args.norm)
         point.stems = tuple(stems[:3])  # type: ignore[assignment]
+        if args.physical_jvp == "py2d":
+            _attach_dns(point, stems[0], stems[1])
         step_fn = lambda u, z, _t=point.t: model_step(ema_vit, u, z, _t)
         print(
             f"[snap {gidx}] stems={stems[:3]} diagnose",
@@ -723,7 +908,7 @@ def run_windows(
             flush=True,
         )
         print(f"[roll {gidx}] length={args.rollout_length}", flush=True)
-        sink: list | None = [] if local_i == 0 else None
+        sink: list = []
         roll = rollout_diagnostics(
             ema_vit,
             frames,
@@ -735,25 +920,22 @@ def run_windows(
             tangent,
             args.rollout_length,
             direction_sink=sink,
+            stems=stems,
         )
-        if sink:
-            extra = validate_fd_eps(
-                step0, [], args.fd_eps, args.fd_tol, args.seed, ds,
-                graph_w=graph_w, extra_directions=sink,
-            )
-            sweep = _merge_fd_reports(sweep, extra)
-            print(
-                f"[fd] with retention directions ok={sweep['ok']} "
-                f"failed={sweep['n_failed']}/{sweep['n_checks']}",
-                flush=True,
-            )
+        extra = jvp_direction_report(step0, sink, args.fd_tol)
+        sweep = _merge_fd_reports(sweep, extra)
+        print(
+            f"[jvp] window {gidx} directions ok={extra['ok']} "
+            f"failed={extra['n_failed']}/{extra['n_checks']}",
+            flush=True,
+        )
         rolls.append(roll)
 
     if not sweep["ok"]:
         worst = sweep.get("worst") or {}
         failed.append(
-            "fd validation failed for the selected eps "
-            f"{args.fd_eps}: {sweep['n_failed']}/{sweep['n_checks']} checks, "
+            "jvp validation failed "
+            f"{sweep['n_failed']}/{sweep['n_checks']} checks, "
             f"worst {worst.get('name')}/{worst.get('block')} "
             f"rel={worst.get('rel')}"
         )
@@ -1009,6 +1191,7 @@ def write_abort(save_dir: Path, args: argparse.Namespace, samples: list[dict], e
         "allow_unvalidated_fd": False,
         "failed_tests": extras.get("failed_tests", []),
         "physical_jvp": extras.get("physical_jvp"),
+        "physical_flow": extras.get("physical_flow"),
         "windows": [
             {"start": s["start_index"], "stems": s["stems"]} for s in samples
         ],
@@ -1029,11 +1212,7 @@ def run_single(args: argparse.Namespace) -> None:
         del os.environ["CUDA_VISIBLE_DEVICES"]
 
     kept = load_kept_paths(args.eval_dir, args.every_nth_field)
-    window_len = args.rollout_length + 2
-    starts = choose_sample_starts(
-        len(kept), args.rollout_length + 1, args.n_snapshots, args.seed
-    )
-    samples = write_sample_index(save_dir, kept, starts, window_len)
+    samples = _select_samples(args, kept, save_dir)
     try:
         diags, rolls, extras = run_windows(
             args, samples, list(range(len(samples)))
@@ -1171,11 +1350,7 @@ def run_orchestrator(args: argparse.Namespace) -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
 
     kept = load_kept_paths(args.eval_dir, args.every_nth_field)
-    window_len = args.rollout_length + 2
-    starts = choose_sample_starts(
-        len(kept), args.rollout_length + 1, args.n_snapshots, args.seed
-    )
-    samples = write_sample_index(save_dir, kept, starts, window_len)
+    samples = _select_samples(args, kept, save_dir)
     print(
         f"[orchestrator] n_snapshots={len(samples)} n_gpus={args.n_gpus} "
         f"save_dir={save_dir}",
