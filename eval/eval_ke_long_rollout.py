@@ -35,7 +35,7 @@ from eval.eval_kinetic_energy_survival import (
     make_wavenumber_tensors,
     survival_curve,
 )
-from eval.eval_long_ar_ke_evalspan import load_high
+from eval.eval_long_ar_ke_evalspan import load_fno, load_high
 
 DEFAULT_REF = Path(
     "/pscratch/sd/d/divyam/hine_runs/paper_1gpu/jacobian_manual_mse/reference_kinetic_energy.npz"
@@ -44,7 +44,7 @@ DEFAULT_REF = Path(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--kind", choices=["l3", "l2", "l1"], required=True)
+    p.add_argument("--kind", choices=["l3", "l2", "l1", "fno"], required=True)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--save-dir", required=True)
     p.add_argument("--eval-dir", default="/global/homes/d/divyam/TACSLAB/eval")
@@ -108,6 +108,13 @@ def rollout(kind, ema, model, high, n_steps, norm, Kx, Ky, invKsq, flush) -> np.
             _, outs = ema(high, coarses, tt)
             coarses[c] = outs[c]
         t_step = float(k) * torch.ones(b, device=high.device, dtype=high.dtype)
+    elif kind == "fno":
+        if int(ema.in_channels) != 1 or int(ema.out_channels) != 1:
+            raise ValueError(
+                f"this rollout steps one frame at a time, got FNO "
+                f"{ema.in_channels}->{ema.out_channels}"
+            )
+        aux = False
     else:
         aux = getattr(ema, "num_aux", 0) > 0
 
@@ -116,6 +123,8 @@ def rollout(kind, ema, model, high, n_steps, norm, Kx, Ky, invKsq, flush) -> np.
             high, mid, low = ema(high, mid, low, t_step)
         elif kind == "l2":
             high, coarses = ema(high, coarses, t_step)
+        elif kind == "fno":
+            high = ema(high)
         else:
             out = ema(high)
             high = out[0] if aux else out
@@ -215,8 +224,11 @@ def main() -> None:
         model, ema = load_l3(args.checkpoint, device)
     elif args.kind == "l2":
         model, ema = load_l2(args.checkpoint, device)
-    else:
+    elif args.kind == "l1":
         model, ema = load_ablation_model(args.checkpoint, device)
+        model = None
+    else:
+        ema = load_fno(args.checkpoint, device)
         model = None
     Kx, Ky, invKsq, _, _, _ = make_wavenumber_tensors(high.shape[-1], high.shape[-2], device)
     meta = {
