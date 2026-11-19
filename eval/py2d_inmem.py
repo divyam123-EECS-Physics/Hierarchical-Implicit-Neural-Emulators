@@ -35,6 +35,12 @@ DNS_ROOT = Path(
 )
 DNS_DATA = DNS_ROOT / "data"
 DNS_IC = DNS_ROOT / "IC"
+# Task 1 for another forcing wavenumber sets this to that run's 512 data directory.
+_dns_override = os.environ.get("HINE_DNS_DATA", "").strip()
+if _dns_override:
+    DNS_DATA = Path(_dns_override)
+    DNS_ROOT = DNS_DATA.parent
+    DNS_IC = DNS_ROOT / "IC"
 
 
 def steps_for(dt_dns: float, interval: float) -> int:

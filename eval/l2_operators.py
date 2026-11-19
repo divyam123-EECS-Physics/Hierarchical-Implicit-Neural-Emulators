@@ -15,6 +15,7 @@ from l2_fd_jvp import (
     FD_OUTPUT_FLOOR,
     L2Point,
     apply_D,
+    apply_Dplus,
     jvp_additivity,
     jvp_both_u,
     jvp_both_uz,
@@ -79,7 +80,13 @@ def _phi_image(
     v_phys = np.asarray(v_model[0, 0].detach().cpu().numpy(), dtype=np_dtype) * np_dtype(norm)
     try:
         jv = tangent.apply(u_phys, v_phys, dns=dns, hats=hats)
-    except TypeError:
+    except TypeError as exc:
+        from l2_physical_jvp import Py2DFDTangent, Py2DJaxTangent
+
+        if isinstance(tangent, (Py2DFDTangent, Py2DJaxTangent)):
+            raise RuntimeError(
+                "Task 1 will not replace jax.jvp with a finite-difference tangent"
+            ) from exc
         jv = tangent.apply(u_phys, v_phys)
     jv = np.asarray(jv, dtype=np_dtype)
     out = torch.from_numpy(np.ascontiguousarray(jv)) / float(norm)
@@ -123,12 +130,13 @@ def diagnose_point(
     n_fine = int(point.u.numel())
     n_coarse = int(point.z.numel())
 
-    tr_A, tr_feedback, tr_J, amp, off, comp = [], [], [], [], [], []
+    tr_A, tr_feedback, tr_J, amp, off, comp, gain_C = [], [], [], [], [], [], []
     for _ in range(n_probes):
         v = _as_image(_rademacher(n_fine, rng), point.u)
         # w = D Phi'_n v. Proxy Phi' is the identity, so w = D v.
         w = apply_D(_phi_image(tangent, point.u, v, norm, dns=dns, hats=hats), ds)
-        Av, _Cv = jvp_both_u(step_fn, point, v, eps_rel)
+        Av, Cv = jvp_both_u(step_fn, point, v, eps_rel)
+        gain_C.append(float(Cv.reshape(-1).double().dot(Cv.reshape(-1).double())) / n_fine)
         Bw, _Kw = jvp_both_z(step_fn, point, w, eps_rel)
         Jv, mixed_h = jvp_both_uz(step_fn, point, v, w, eps_rel)
         if proxy:
@@ -145,7 +153,7 @@ def diagnose_point(
         off.append(float(L.reshape(-1).double().pow(2).sum() / n_fine))
         comp.append(_rel_residual(Jv - Av - Bw, Jv))
 
-    tr_K, tr_DB, tr_DPhi_next, tr_S = [], [], [], []
+    tr_K, tr_DB, tr_DPhi_next, tr_S, tr_C_Dplus = [], [], [], [], []
     for _ in range(n_probes):
         w = _as_image(_rademacher(n_coarse, rng), point.z)
         Bw, Kw = jvp_both_z(step_fn, point, w, eps_rel)
@@ -163,10 +171,20 @@ def diagnose_point(
         tr_DB.append(float(torch.dot(wf, DBw.reshape(-1).double())))
         tr_DPhi_next.append(float(torch.dot(wf, DPhi_next_B.reshape(-1).double())))
         tr_S.append(float(torch.dot(wf, Sw.reshape(-1).double())))
+        # w · C(Dplus w): fine-to-latent tendency on block-constant lifts.
+        lifted = apply_Dplus(w, ds)
+        _fine_lift, latent_lift = jvp_both_u(step_fn, point, lifted, eps_rel)
+        tr_C_Dplus.append(float(torch.dot(wf, latent_lift.reshape(-1).double())))
 
     sA, sFeed, sJ = _stats(tr_A), _stats(tr_feedback), _stats(tr_J)
     sK, sDB, sNext, sS = _stats(tr_K), _stats(tr_DB), _stats(tr_DPhi_next), _stats(tr_S)
     sAmp, sOff, sComp = _stats(amp), _stats(off), _stats(comp)
+    sLift, sGain = _stats(tr_C_Dplus), _stats(gain_C)
+    split = (
+        np.asarray(tr_K, dtype=np.float64)
+        - np.asarray(tr_DPhi_next, dtype=np.float64)
+        - np.asarray(tr_S, dtype=np.float64)
+    )
     gap = sFeed["mean"] - sDB["mean"]
     gap_ci = float(np.hypot(sFeed["ci95"], sDB["ci95"]))
 
@@ -189,6 +207,8 @@ def diagnose_point(
         "tr_DB": sDB,
         "tr_DPhi_next_B": sNext,
         "tr_S": sS,
+        "tr_C_Dplus": sLift,
+        "gain_C": sGain,
         "amp_J": sAmp,
         "offgraph_probe": sOff,
         "composition_rel": sComp,
@@ -203,6 +223,12 @@ def diagnose_point(
         "tr_B_DPhi_n_quot": sFeed["mean"] / (n_fine * dt),
         "tr_Heff_over_N": quot(sJ["mean"], n_fine),
         "tr_Sigma_over_M": quot(sS["mean"], n_coarse),
+        "tr_Ez_over_M": (sK["mean"] - n_coarse) / (n_coarse * dt),
+        "tr_minus_Qnext_B_over_Mdt": -sNext["mean"] / (n_coarse * dt),
+        "tr_S_split_probe_max": float(np.max(np.abs(split))) if split.size else float("nan"),
+        "tr_C_Dplus_quot": sLift["mean"] / (n_coarse * dt),
+        "gain_C_over_N": sGain["mean"],
+        "gain_Eu_sq_over_N": sGain["mean"] / (dt * dt),
         "composition_rel_mean": sComp["mean"],
         "composition_rel_max": float(np.max(sComp["probes"])) if sComp["probes"].size else float("nan"),
         "trace_estimator_gap": gap,
@@ -352,6 +378,12 @@ def flat_diag(diag: dict) -> dict[str, np.ndarray]:
         "tr_B_DPhi_n_quot",
         "tr_Heff_over_N",
         "tr_Sigma_over_M",
+        "tr_Ez_over_M",
+        "tr_minus_Qnext_B_over_Mdt",
+        "tr_S_split_probe_max",
+        "tr_C_Dplus_quot",
+        "gain_C_over_N",
+        "gain_Eu_sq_over_N",
         "composition_rel_mean",
         "composition_rel_max",
         "trace_estimator_gap",
@@ -370,6 +402,8 @@ def flat_diag(diag: dict) -> dict[str, np.ndarray]:
         "tr_DB",
         "tr_DPhi_next_B",
         "tr_S",
+        "tr_C_Dplus",
+        "gain_C",
         "amp_J",
         "offgraph_probe",
     ):

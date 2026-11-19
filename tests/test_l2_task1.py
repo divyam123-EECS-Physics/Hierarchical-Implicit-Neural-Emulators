@@ -22,6 +22,7 @@ from l2_fd_jvp import (
     apply_B,
     apply_C,
     apply_D,
+    apply_Dplus,
     apply_K,
     assert_l2,
     block_step,
@@ -29,14 +30,33 @@ from l2_fd_jvp import (
     fd_both_uz,
     fd_both_z,
     fd_pair,
+    jvp_both_uz,
     jvp_direction_report,
     make_point,
     validate_fd_eps,
 )
-from eval_l2_stability_task1 import DIAG_KEYS, ROLL_KEYS, plot_validation_flags, run_succeeded
+from eval_l2_stability_task1 import (
+    DIAG_KEYS,
+    ROLL_KEYS,
+    parse_args,
+    percentile_band,
+    plot_validation_flags,
+    run_succeeded,
+    trace_rows,
+)
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth, rho_S
 from l2_physical_jvp import ProxyTangent, Py2DFDTangent, validate_physical_reference
-from l2_retention import _cos, propagate_augmented, relative_residual, running_channels, validation_directions
+from l2_retention import (
+    LATENT_CHANNEL_KEYS,
+    LATENT_LIN_KEYS,
+    _cos,
+    account_injections,
+    latent_error_channels,
+    propagate_augmented,
+    relative_residual,
+    running_channels,
+    validation_directions,
+)
 from main_plus import finalize_args
 from model_plus import FutureINNPlus
 import argparse
@@ -532,7 +552,7 @@ def test_spectral_failure_fails_the_job_and_its_plot():
     other, spectral = plot_validation_flags(True, True, True)
     assert other is True and spectral is True
     other, spectral = plot_validation_flags(False, True, True)
-    assert other is False and spectral is True
+    assert other is False and spectral is False
 
 
 def test_physical_operator_and_check_share_epsilon():
@@ -597,6 +617,265 @@ def test_jvp_direction_report_is_exact_on_a_linear_map():
     assert report["n_failed"] == 0
 
 
+def test_dense_jacobian_matches_jvp_on_both_heads():
+    def step(u, z):
+        return 0.3 * u + 0.2 * z, 0.4 * z - 0.1 * u
+
+    u = torch.randn(1, 1, 2, 2, dtype=torch.float64)
+    z = torch.randn(1, 1, 2, 2, dtype=torch.float64)
+    du = torch.randn_like(u)
+    dz = torch.randn_like(z)
+    _primals, tangents = torch.autograd.functional.jvp(step, (u, z), (du, dz))
+    jac = torch.autograd.functional.jacobian(step, (u, z))
+
+    def contract(block, direction):
+        return (block * direction).sum(dim=tuple(range(-direction.ndim, 0)))
+
+    g_ref = contract(jac[0][0], du) + contract(jac[0][1], dz)
+    h_ref = contract(jac[1][0], du) + contract(jac[1][1], dz)
+    assert torch.allclose(tangents[0], g_ref, atol=1e-8, rtol=1e-8)
+    assert torch.allclose(tangents[1], h_ref, atol=1e-8, rtol=1e-8)
+
+
+def test_validation_fd_does_not_replace_the_reported_jvp():
+    def step(u, z):
+        return 0.2 * u + 0.1 * z, -0.3 * z + 0.05 * u
+
+    point = make_point(
+        [np.ones((4, 4)), np.full((4, 4), 0.5), np.ones((4, 4))],
+        type("M", (), {"ds_factors": [1]})(),
+        torch.device("cpu"),
+        torch.float64,
+        1.0,
+    )
+    du = torch.randn_like(point.u)
+    dz = torch.randn_like(point.z)
+    jg, jh = jvp_both_uz(step, point, du, dz)
+    fg, fh = fd_both_uz(step, point, du, dz, 1e-5)
+    assert torch.allclose(jg, fg, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(jh, fh, atol=1e-5, rtol=1e-5)
+    report = jvp_direction_report(
+        step, [{"name": "linear", "point": point, "du": du, "dz": dz}], 1e-6
+    )
+    assert report["derivative"] == "torch.autograd.functional.jvp"
+    assert report["ok"]
+
+
+def test_injection_names_and_vector_sums():
+    eps_z = [torch.tensor([[[[1.0]]]]), torch.tensor([[[[3.0]]]])]
+    xi = [torch.tensor([[[[0.0]]]]), torch.tensor([[[[4.0]]]])]
+    eta = [
+        torch.zeros(1, 1, 1, 1),
+        eps_z[0].clone(),
+        eps_z[0] + eps_z[1],
+    ]
+    nu = [item + 2.0 for item in eta]
+    out = account_injections(eta, eps_z, xi, nu)
+    assert np.isnan(out["cos_eta_inj"][0])
+    assert abs(out["eps_z_sum_norm"][2] - float((eps_z[0] + eps_z[1]).norm())) < 1e-8
+    assert abs(out["xi_sum_norm"][2] - float((xi[0] + xi[1]).norm())) < 1e-8
+    assert abs(out["cos_eta_eps_z"][2] - 1.0) < 1e-8
+    assert abs(out["cos_nu_xi"][2] - _cos(nu[2], xi[0] + xi[1])) < 1e-8
+    assert "cos_eta_eps_z" in ROLL_KEYS and "cos_nu_xi" in ROLL_KEYS
+
+
+def test_percentile_band_is_not_a_zero_fill():
+    values = np.array([[0.0, np.nan], [1.0, np.nan]])
+    mean, lo, hi, n_valid = percentile_band(values)
+    assert abs(mean[0] - 0.5) < 1e-12
+    assert n_valid[0] == 2 and n_valid[1] == 0
+    assert np.isnan(mean[1])
+    assert lo[0] <= mean[0] <= hi[0]
+
+
+def test_j_quotient_keeps_its_probe_bar():
+    diag = {
+        "dt": np.array(0.05),
+        "n_fine": np.array([4.0, 4.0]),
+        "n_coarse": np.array([1.0, 1.0]),
+        "tr_A_mean": np.zeros(2),
+        "tr_A_ci95": np.full(2, 1.96),
+        "tr_K_over_M": np.ones(2),
+        "tr_J_mean": np.zeros(2),
+        "tr_J_ci95": np.full(2, 1.96),
+        "tr_S_mean": np.zeros(2),
+        "tr_S_ci95": np.ones(2),
+        "tr_DB_mean": np.zeros(2),
+        "tr_DB_ci95": np.ones(2),
+        "tr_B_DPhi_n_mean": np.zeros(2),
+        "tr_B_DPhi_n_ci95": np.ones(2),
+        "tr_DPhi_next_B_mean": np.zeros(2),
+        "tr_DPhi_next_B_ci95": np.ones(2),
+        "tr_Fu_over_N": np.zeros(2),
+        "tr_Heff_over_N": np.zeros(2),
+        "tr_Sigma_over_M": np.zeros(2),
+        "tr_DFz_over_N": np.zeros(2),
+        "tr_B_DPhi_n_quot": np.zeros(2),
+    }
+    _raw, quotients = trace_rows(diag)
+    heff = next(row for row in quotients if r"H_{\mathrm{eff}}" in row[3])
+    assert r"A_n+B_n D\Phi'_n" in heff[0]
+    assert heff[2] is not None
+    assert abs(float(np.asarray(heff[2])[0]) - 1.96 / (4.0 * 0.05)) < 1e-12
+
+
+def test_production_preset_keeps_explicit_overrides():
+    args = parse_args(["--production", "--n-snapshots", "1", "--device", "cpu"])
+    assert args.model_dtype == "float64"
+    assert args.physical_jvp == "py2d"
+    assert args.rollout_length == 40
+    assert args.n_probes == 32
+    assert args.dt == 0.05
+    assert args.spectral_radius is True
+    assert args.n_snapshots == 1
+    bare = parse_args(["--device", "cpu"])
+    assert bare.model_dtype == "float32"
+    assert bare.physical_jvp == "proxy"
+    assert bare.n_snapshots == 4
+
+
+def test_latent_fine_error_channels_on_an_affine_model():
+    C = torch.zeros(4, 16, dtype=torch.float64)
+    C[:, :4] = torch.eye(4)
+    K = torch.eye(4, dtype=torch.float64)
+    direction = torch.ones(4, dtype=torch.float64)
+
+    def _fine_from_latent(lat: torch.Tensor) -> torch.Tensor:
+        flat = torch.zeros(16, dtype=torch.float64)
+        flat[:4] = lat.reshape(-1)
+        return flat.reshape(1, 1, 4, 4)
+
+    def _lat(vec: torch.Tensor) -> torch.Tensor:
+        return vec.reshape(1, 1, 2, 2)
+
+    def apply_c(_k, vec):
+        return _lat(C @ vec.reshape(-1))
+
+    def apply_k(_k, vec):
+        return _lat(K @ vec.reshape(-1))
+
+    # Step 0 is zero. Step 1 reinforces. Step 2 opposes. Remainder is zero.
+    e0 = torch.zeros(1, 1, 4, 4, dtype=torch.float64)
+    eta0 = torch.zeros(1, 1, 2, 2, dtype=torch.float64)
+    e1 = _fine_from_latent(direction)
+    eta1 = _lat(2.0 * direction)
+    ez1 = _lat(direction)
+    eta2 = apply_c(1, e1) + apply_k(1, eta1) + ez1
+    e2 = _fine_from_latent(direction)
+    ez2 = _lat(-direction - (K @ eta2.reshape(-1)))
+    eta3 = apply_c(2, e2) + apply_k(2, eta2) + ez2
+    e = [e0, e1, e2, torch.zeros_like(e0)]
+    eta = [eta0, eta1, eta2, eta3]
+    eps_u = [torch.randn(1, 1, 4, 4, dtype=torch.float64) for _ in range(3)]
+    eps_u[0] = torch.zeros_like(e0)
+    eps_u[1] = _fine_from_latent(direction)
+    eps_z = [torch.zeros_like(eta0), ez1, ez2]
+
+    Qe = [apply_D(item, 2) for item in e]
+    out = latent_error_channels(
+        e, eta, eps_u, eps_z, apply_c, apply_k, Qe=Qe, nu=list(eta),
+    )
+    assert float(np.max(out["eta_recon_norm"])) < 1e-8
+    assert float(np.max(np.abs(out["budget_resid"]))) < 1e-8
+    r_u = torch.zeros_like(eta[0])
+    r_z = torch.zeros_like(eta[0])
+    i_z = torch.zeros_like(eta[0])
+    for n in range(4):
+        rho = eta[n] - i_z
+        assert abs(out["channel_remainder_norm"][n] - float((rho - r_u - r_z).norm())) < 1e-8
+        for key, left, right in (
+            ("cos_eta_rho", eta[n], rho),
+            ("cos_rz_eta", r_z, eta[n]),
+            ("cos_rho_rz", rho, r_z),
+            ("cos_rho_Iz", rho, i_z),
+        ):
+            expected = _cos(left, right)
+            got = out[key][n]
+            if np.isnan(expected):
+                assert np.isnan(got)
+            else:
+                assert abs(got - expected) < 1e-8
+        if n == 3:
+            break
+        r_u = r_u + apply_c(n, e[n])
+        r_z = r_z + (apply_k(n, eta[n]) - eta[n])
+        i_z = i_z + eps_z[n]
+    assert out["cross_bp"][1] > 0.0 and out["delta_fine"][1] > 0.0
+    assert out["cross_bp"][2] < 0.0 and out["delta_fine"][2] < 0.0
+    for n in range(3):
+        p = apply_c(n, e[n])
+        b = apply_k(n, eta[n]) + eps_z[n]
+        bp = (b + p).reshape(-1)
+        bb = b.reshape(-1)
+        delta = float(bp.dot(bp) - bb.dot(bb))
+        assert abs(out["delta_fine"][n] - delta) < 1e-8
+
+    sum_u = torch.zeros_like(e[0])
+    sum_z = torch.zeros_like(eta[0])
+    acc_u = torch.zeros_like(eta[0])
+    acc_z = torch.zeros_like(eta[0])
+    for n in range(3):
+        assert abs(out["r_u_to_z_first_norm"][n] - float(acc_u.norm())) < 1e-8
+        assert abs(out["r_z_to_z_first_norm"][n] - float(acc_z.norm())) < 1e-8
+        acc_u = acc_u + apply_c(n, sum_u)
+        acc_z = acc_z + (apply_k(n, sum_z) - sum_z)
+        sum_u = sum_u + eps_u[n]
+        sum_z = sum_z + eps_z[n]
+    assert abs(out["r_u_to_z_first_norm"][3] - float(acc_u.norm())) < 1e-8
+
+    z = torch.randn(1, 1, 2, 2, dtype=torch.float64)
+    assert torch.allclose(apply_D(apply_Dplus(z, 2), 2), z, atol=1e-12)
+    uneven = torch.randn(1, 1, 4, 4, dtype=torch.float64)
+    assert not torch.allclose(apply_Dplus(apply_D(uneven, 2), 2), uneven, atol=1e-3)
+
+    lin = LinearL2(seed=4)
+    dense_lift = 0.0
+    for i in range(4):
+        basis = torch.zeros(4, dtype=torch.float64)
+        basis[i] = 1.0
+        lifted = apply_Dplus(basis.reshape(1, 1, 2, 2), 2).reshape(-1)
+        dense_lift += float(basis @ (lin.C @ lifted))
+    dense_gain = float((lin.C * lin.C).sum()) / 16.0
+    pt = _point(torch.Generator().manual_seed(4))
+    diag = diagnose_point(
+        lin.step, pt, 2, 1e-4, ProxyTangent(), dt=0.25, norm=1.0,
+        n_probes=64, seed=4, spectral_radius=False, ncv=3, maxiter=20, tol=1e-6,
+    )
+    assert diag["tr_S_split_probe_max"] < 1e-6
+    assert abs(
+        diag["tr_Ez_over_M"] - (diag["tr_K"]["mean"] - 4.0) / (4.0 * 0.25)
+    ) < 1e-10
+    flat = flat_diag(diag)
+    assert abs(flat["tr_C_Dplus_quot"] - diag["tr_C_Dplus"]["mean"] / (4.0 * 0.25)) < 1e-12
+    assert "tr_C_mean" not in flat and "tr_Eu_over_N" not in flat
+    lift_se = diag["tr_C_Dplus"]["std"] / np.sqrt(64)
+    gain_se = diag["gain_C"]["std"] / np.sqrt(64)
+    assert abs(diag["tr_C_Dplus"]["mean"] - dense_lift) < max(6.0 * lift_se, 1e-8)
+    assert abs(diag["gain_C_over_N"] - dense_gain) < max(6.0 * gain_se, 1e-8)
+    assert abs(flat["gain_Eu_sq_over_N"] - dense_gain / (0.25 ** 2)) < max(
+        6.0 * gain_se / (0.25 ** 2), 1e-8
+    )
+
+    zeros_e = [torch.zeros(1, 1, 4, 4, dtype=torch.float64) for _ in range(2)]
+    zeros_z = [torch.zeros(1, 1, 2, 2, dtype=torch.float64) for _ in range(2)]
+    quiet = latent_error_channels(
+        zeros_e, zeros_z, zeros_e[:1], zeros_z[:1], apply_c, apply_k,
+    )
+    assert np.isnan(quiet["cos_p_eta"][0])
+    assert np.isnan(quiet["cos_ru_Iz"][0])
+
+    assert set(LATENT_CHANNEL_KEYS).issubset(ROLL_KEYS)
+    assert set(LATENT_LIN_KEYS).issubset(ROLL_KEYS)
+    assert "cos_eta_inj" in ROLL_KEYS
+    left = {key: np.arange(4, dtype=np.float64) for key in ROLL_KEYS}
+    right = {key: np.arange(4, dtype=np.float64) + 1.0 for key in ROLL_KEYS}
+    merged = {key: np.stack([left[key], right[key]]) for key in ROLL_KEYS}
+    assert merged["p_norm"].shape == (2, 4)
+    assert merged["lin_eta_recon_norm"].shape == (2, 4)
+    missing = [key for key in DIAG_KEYS if key not in flat]
+    assert not missing, missing
+
+
 def test_float64_path_does_not_downcast():
     class _Model:
         ds_factors = [2]
@@ -648,5 +927,12 @@ if __name__ == "__main__":
     test_spectral_failure_fails_the_job_and_its_plot()
     test_physical_operator_and_check_share_epsilon()
     test_jvp_direction_report_is_exact_on_a_linear_map()
+    test_dense_jacobian_matches_jvp_on_both_heads()
+    test_validation_fd_does_not_replace_the_reported_jvp()
+    test_injection_names_and_vector_sums()
+    test_percentile_band_is_not_a_zero_fill()
+    test_j_quotient_keeps_its_probe_bar()
+    test_latent_fine_error_channels_on_an_affine_model()
+    test_production_preset_keeps_explicit_overrides()
     test_float64_path_does_not_downcast()
     print("ok")

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Task 1 diagnostics for a trained direct-step L=2 HINE checkpoint.
 
-Matrix-free centered finite differences only. Does not retrain, does not
-edit weights, and does not treat HINE as an Euler integrator.
+Network blocks are torch.autograd.functional.jvp. The physical tangent is
+jax.jvp of the 512 DNS startup advance. A failed JVP is an error. It is not
+replaced by a centered difference. Py2DFDTangent remains available for other
+tasks and for explicitly labeled validation checks.
 
-Proxy mode (default) uses D Phi' ≈ D and labels results approximation=proxy.
-py2d mode uses a finite-difference physical tangent through the py2d
-checkout. That finite difference is not an exact tangent. It requires the
-hine-jax env.
+Proxy mode (the argparse default, not the production run) uses D Phi' ≈ D.
+--production selects float64, py2d, 20 windows, rollout 40, 32 probes,
+dt=0.05, and the corrected sample index unless those flags are also passed.
+
+Does not retrain, does not edit weights, and does not treat HINE as Euler.
 
 With --n-gpus N>1 the parent shards the N_snapshots windows across GPUs
 (round-robin) and merges shard_*.npz into results.npz + plots.
@@ -91,7 +94,12 @@ from l2_fd_jvp import (
 )
 from l2_operators import _phi_image, diagnose_point, flat_diag, gates_pass, quotient_halfwidth
 from l2_physical_jvp import load_dns_frame, make_tangent, validate_physical_reference
-from l2_retention import relative_residual, rollout_diagnostics
+from l2_retention import (
+    LATENT_CHANNEL_KEYS,
+    LATENT_LIN_KEYS,
+    relative_residual,
+    rollout_diagnostics,
+)
 
 
 DIAG_KEYS = [
@@ -129,7 +137,16 @@ DIAG_KEYS = [
     "tr_B_DPhi_n_mean",
     "tr_B_DPhi_n_ci95",
     "tr_DPhi_next_B_mean",
+    "tr_DPhi_next_B_std",
     "tr_DPhi_next_B_ci95",
+    "tr_DPhi_next_B_probes",
+    "tr_K_mean",
+    "tr_K_std",
+    "tr_K_ci95",
+    "tr_K_probes",
+    "tr_DB_probes",
+    "tr_B_DPhi_n_std",
+    "tr_B_DPhi_n_probes",
     "amp_J_mean",
     "amp_J_std",
     "amp_J_ci95",
@@ -140,6 +157,20 @@ DIAG_KEYS = [
     "tr_J_probes",
     "tr_S_probes",
     "amp_J_probes",
+    "tr_Ez_over_M",
+    "tr_minus_Qnext_B_over_Mdt",
+    "tr_S_split_probe_max",
+    "tr_C_Dplus_quot",
+    "gain_C_over_N",
+    "gain_Eu_sq_over_N",
+    "tr_C_Dplus_mean",
+    "tr_C_Dplus_std",
+    "tr_C_Dplus_ci95",
+    "tr_C_Dplus_probes",
+    "gain_C_mean",
+    "gain_C_std",
+    "gain_C_ci95",
+    "gain_C_probes",
 ]
 RHO_KEYS = ["rho_S", "rho_S_real", "rho_S_imag", "rho_S_converged", "rho_S_residual"]
 ROLL_KEYS = (
@@ -173,7 +204,24 @@ ROLL_KEYS = (
     "eta_lin_rel",
     "recon_lin_norm",
     "cos_e_e_lin",
+    "eps_z_sum_norm",
+    "xi_sum_norm",
+    "xi_norm",
+    "nu_norm",
+    "cos_eta_eps_z",
+    "cos_nu_xi",
+    "nu_available",
+    *LATENT_CHANNEL_KEYS,
+    *LATENT_LIN_KEYS,
 )
+
+PRODUCTION_SAMPLE_INDEX = (
+    "/pscratch/sd/d/divyam/hine_runs/plus_L2_m32/"
+    "task1_l2_n20_float64_py2d_dt05/sample_index.json"
+)
+FLOW_REPLAY_TOL = 1e-3
+JVP_TOL = 1e-6
+EIGEN_RESIDUAL_TOL = 1e-3
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -222,6 +270,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--re", type=float, default=1e4)
     p.add_argument("--fkx", type=int, default=4)
     p.add_argument("--fky", type=int, default=4)
+    p.add_argument(
+        "--dns-data",
+        default="",
+        help="512 DNS directory. Empty keeps the fkx=4 paper data. Sets HINE_DNS_DATA.",
+    )
     p.add_argument("--alpha", type=float, default=0.1)
     p.add_argument("--beta", type=float, default=20.0)
     p.add_argument("--solver-dt", type=float, default=1e-4)
@@ -237,7 +290,45 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Internal: process one GPU shard of windows",
     )
     p.add_argument("--gpu-rank", type=int, default=None)
-    return p.parse_args(argv)
+    p.add_argument(
+        "--production",
+        action="store_true",
+        help=(
+            "Select the completed-run configuration: float64, py2d, 20 windows, "
+            "rollout 40, 32 probes, dt=0.05, spectral radius, corrected sample index. "
+            "An explicit flag on the command line still wins."
+        ),
+    )
+    args = p.parse_args(argv)
+    return apply_production(args, argv)
+
+
+def apply_production(args: argparse.Namespace, argv=None) -> argparse.Namespace:
+    """Fill production settings only for flags the user did not pass."""
+    if not getattr(args, "production", False):
+        return args
+    seen = list(sys.argv[1:] if argv is None else argv)
+
+    def absent(flag: str) -> bool:
+        return flag not in seen
+
+    if absent("--model-dtype"):
+        args.model_dtype = "float64"
+    if absent("--physical-jvp"):
+        args.physical_jvp = "py2d"
+    if absent("--n-snapshots"):
+        args.n_snapshots = 20
+    if absent("--rollout-length"):
+        args.rollout_length = 40
+    if absent("--n-probes"):
+        args.n_probes = 32
+    if absent("--dt"):
+        args.dt = 0.05
+    if absent("--spectral-radius"):
+        args.spectral_radius = True
+    if absent("--sample-index"):
+        args.sample_index = PRODUCTION_SAMPLE_INDEX
+    return args
 
 
 def _hash_module(mod: torch.nn.Module) -> str:
@@ -403,7 +494,23 @@ def _run_extras(
         "physical_jvp": tangent.name,
         "is_exact_physical_jvp": False,
         "py2d_root": getattr(tangent, "py2d_root", None),
-        "physical_jvp_note": "finite-difference estimates are not exact tangents",
+        "physical_jvp_note": (
+            "Network blocks use torch.autograd.functional.jvp. "
+            "The physical tangent is jax.jvp of the 512 single-field startup "
+            "advance (Omega0 and convec0 are functions of that same field; no "
+            "previous snapshot is held fixed). Finite differences are not a "
+            "production fallback. Py2DFDTangent is validation-only or for other tasks."
+        ),
+        "tolerances": {
+            "flow_replay": FLOW_REPLAY_TOL,
+            "jvp_additivity": JVP_TOL,
+            "eigen_residual": EIGEN_RESIDUAL_TOL,
+            "legacy_fd_tol": float(args.fd_tol),
+            "eigen_note": (
+                "The eigenpair residual checks the pair ARPACK returned. "
+                "A small residual does not prove that the value is dominant."
+            ),
+        },
         "num_coarse": num_coarse,
         "latent_res": latent_res,
         "global_indices": [int(g) for g in global_indices],
@@ -437,12 +544,18 @@ def run_succeeded(fd_validated: bool, spectral_validated, spectral_requested: bo
 
 
 def plot_validation_flags(fd_validated: bool, spectral_validated, spectral_requested: bool) -> tuple[bool, bool]:
-    """Other plots follow the finite-difference gate. The spectral plot follows spectral status."""
+    """The spectral plot is validated only when the operator gate passes too.
+
+    fd_validated is the operator-validation flag (JVP additivity and composition
+    on the current path, plus the physical replay when that tangent is on).
+    A converged eigenpair does not validate rho_S if the operator gate failed.
+    """
+    operator_ok = bool(fd_validated)
     if spectral_requested:
-        spectral_plot = spectral_validated is True
+        spectral_plot = operator_ok and spectral_validated is True
     else:
-        spectral_plot = bool(fd_validated)
-    return bool(fd_validated), spectral_plot
+        spectral_plot = operator_ok
+    return operator_ok, spectral_plot
 
 
 def _merge_fd_reports(base: dict, extra: dict) -> dict:
@@ -462,6 +575,29 @@ def _title(text: str, validated: bool) -> str:
     return text if validated else f"UNVALIDATED {text}"
 
 
+def percentile_band(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Mean of defined values and the empirical 16th–84th percentile.
+
+    The band is the spread across windows. It is not a confidence interval.
+    An all-undefined step stays NaN. n_valid counts finite windows at that step.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    mean = np.full(arr.shape[1], np.nan, dtype=np.float64)
+    lo = np.full(arr.shape[1], np.nan, dtype=np.float64)
+    hi = np.full(arr.shape[1], np.nan, dtype=np.float64)
+    n_valid = np.zeros(arr.shape[1], dtype=np.int64)
+    for j in range(arr.shape[1]):
+        good = arr[:, j][np.isfinite(arr[:, j])]
+        n_valid[j] = int(good.size)
+        if good.size:
+            mean[j] = float(np.mean(good))
+            lo[j] = float(np.percentile(good, 16))
+            hi[j] = float(np.percentile(good, 84))
+    return mean, lo, hi, n_valid
+
+
 def _defined_mean(values: np.ndarray) -> np.ndarray:
     """Mean across windows. A step that is undefined in every window stays NaN."""
     arr = np.asarray(values, dtype=np.float64)
@@ -474,6 +610,194 @@ def _defined_mean(values: np.ndarray) -> np.ndarray:
         if good.size:
             out[j] = float(good.mean())
     return out
+
+
+def _optional(diag: dict, key: str):
+    if key not in diag:
+        return None
+    return np.asarray(diag[key], dtype=np.float64)
+
+
+def trace_rows(diag: dict) -> tuple[tuple, tuple]:
+    """Raw traces and difference quotients with probe-uncertainty bars."""
+    dt = float(np.asarray(diag["dt"]))
+    n_fine = np.asarray(diag["n_fine"], dtype=np.float64)
+    n_coarse = np.asarray(diag["n_coarse"], dtype=np.float64)
+    tr_k = np.asarray(diag["tr_K_over_M"], dtype=np.float64) * n_coarse
+    k_ci = _optional(diag, "tr_K_ci95")
+    raw = (
+        (r"$\mathrm{Tr}\,A$", diag["tr_A_mean"], diag["tr_A_ci95"]),
+        (r"$\mathrm{Tr}\,K$", tr_k, k_ci),
+        (r"$\mathrm{Tr}\,J_{\mathrm{graph}}$", diag["tr_J_mean"], diag["tr_J_ci95"]),
+        (r"$\mathrm{Tr}\,S$", diag["tr_S_mean"], diag["tr_S_ci95"]),
+        (r"$\mathrm{Tr}(DB)$ proxy", diag["tr_DB_mean"], diag["tr_DB_ci95"]),
+        (r"$\mathrm{Tr}(B D\Phi'_n)$", diag["tr_B_DPhi_n_mean"], diag["tr_B_DPhi_n_ci95"]),
+        (
+            r"$\mathrm{Tr}(D\Phi'_{n+1} B)$",
+            diag["tr_DPhi_next_B_mean"],
+            diag["tr_DPhi_next_B_ci95"],
+        ),
+    )
+    # Titles are the HTML Euler names. They equal the y-axis quotients only
+    # for a forward-Euler step. The trained map is direct-step, so the titles
+    # name these quotients. "proxy" is DB with Phi' replaced by I.
+    quotients = (
+        (
+            r"$(\mathrm{Tr}\,A_n-N)/(N\Delta t)$",
+            diag["tr_Fu_over_N"],
+            quotient_halfwidth(diag["tr_A_ci95"], n_fine, dt),
+            r"$\mathrm{Tr}(F_u)/N$",
+        ),
+        (
+            r"$(\mathrm{Tr}\,K_n-M)/(M\Delta t)$",
+            (np.asarray(diag["tr_K_over_M"], dtype=np.float64) - 1.0) / dt,
+            None if k_ci is None else k_ci / (n_coarse * dt),
+            r"$\mathrm{Tr}(E_z)/M$",
+        ),
+        (
+            r"$(\mathrm{Tr}(A_n+B_n D\Phi'_n)-N)/(N\Delta t)$",
+            diag["tr_Heff_over_N"],
+            quotient_halfwidth(diag["tr_J_ci95"], n_fine, dt),
+            r"$\mathrm{Tr}(H_{\mathrm{eff}})/N$",
+        ),
+        (
+            r"$(\mathrm{Tr}\,S_n-M)/(M\Delta t)$",
+            diag["tr_Sigma_over_M"],
+            quotient_halfwidth(diag["tr_S_ci95"], n_coarse, dt),
+            r"$\mathrm{Tr}(\Sigma)/M$",
+        ),
+        (
+            r"$\mathrm{Tr}(DB_n)/(N\Delta t)$",
+            diag["tr_DFz_over_N"],
+            quotient_halfwidth(diag["tr_DB_ci95"], n_fine, dt),
+            r"$\mathrm{Tr}(DF_z)/N$ proxy",
+        ),
+        (
+            r"$\mathrm{Tr}(B_n D\Phi'_n)/(N\Delta t)$",
+            diag["tr_B_DPhi_n_quot"],
+            quotient_halfwidth(diag["tr_B_DPhi_n_ci95"], n_fine, dt),
+            r"$\mathrm{Tr}(F_z D\Phi'_n)/N$",
+        ),
+        (
+            r"$\mathrm{Tr}(D\Phi'_{n+1} B_n)/(M\Delta t)$",
+            np.asarray(diag["tr_DPhi_next_B_mean"], dtype=np.float64) / (n_coarse * dt),
+            np.asarray(diag["tr_DPhi_next_B_ci95"], dtype=np.float64) / (n_coarse * dt),
+            r"$\mathrm{Tr}(D\Phi'_{n+1} F_z)/M$",
+        ),
+    )
+    return raw, quotients
+
+
+def _write_trace_panels(plot_dir: Path, diag: dict, validated: bool) -> None:
+    """Raw traces and difference quotients, one scale each.
+
+    Error bars are Hutchinson probe uncertainty at that state. They are not
+    the spread across windows, and a negative trace is not a contraction.
+    """
+    idx = np.arange(np.asarray(diag["tr_A_over_N"]).shape[0])
+    raw, quotients = trace_rows(diag)
+
+    def _draw(path: Path, rows, title: str, *, footnote: str | None = None) -> None:
+        titled = any(len(row) > 3 for row in rows)
+        height = (2.45 if titled else 2.1) * len(rows)
+        fig, axes = plt.subplots(len(rows), 1, figsize=(8.2, height), sharex=True)
+        for ax, row in zip(axes, rows):
+            label, y, err = row[0], row[1], row[2]
+            _errbar(ax, idx, y, err, label)
+            ax.set_ylabel(label, fontsize=9)
+            if len(row) > 3:
+                ax.set_title(row[3], fontsize=10)
+        axes[-1].set_xlabel("window")
+        fig.suptitle(_title(title, validated))
+        if footnote:
+            fig.text(0.5, 0.005, footnote, ha="center", va="bottom", fontsize=8)
+            fig.tight_layout(rect=(0, 0.07, 1, 0.98))
+        else:
+            fig.tight_layout()
+        fig.savefig(path, dpi=140)
+        plt.close(fig)
+
+    _draw(
+        plot_dir / "traces_raw.png",
+        raw,
+        "Hutchinson traces. Bars: probe uncertainty, not a contraction test",
+    )
+    quotient_note = (
+        "Titles are the Euler tendency names. They equal the y-axis quotients\n"
+        "only for a forward-Euler step. This checkpoint is direct-step, so the titles name the quotients.\n"
+        r"$\mathrm{Tr}(DF_z)/N$ uses $DB$ with $\Phi'\approx I$ and is not the physical feedback."
+        "\n"
+        r"$\mathrm{Tr}(D\Phi'_{n+1} F_z)/M$ is the coarse feedback inside $S$, divided by $M$, and is not $\mathrm{Tr}(DF_z)/N$."
+    )
+    _draw(
+        plot_dir / "traces_quotients.png",
+        quotients,
+        "Difference quotients. Bars: probe uncertainty, not a contraction test",
+        footnote=quotient_note,
+    )
+    stems = ("Fu", "Ez", "Heff", "Sigma", "DFz", "FzDPhi", "DPhiFz")
+    for stem, row in zip(stems, quotients):
+        label, y, err, panel_title = row
+        fig, ax = plt.subplots(figsize=(6.4, 4.2))
+        _errbar(ax, idx, y, err, label)
+        ax.set_xlabel("window")
+        ax.set_ylabel(label, fontsize=10)
+        ax.set_title(_title(panel_title, validated))
+        fig.tight_layout()
+        fig.savefig(plot_dir / f"traces_quotient_{stem}.png", dpi=140)
+        plt.close(fig)
+    # Seven quotients: two rows of four, last cell unused. A 4x4 would leave nine blanks.
+    fig, axes = plt.subplots(2, 4, figsize=(16, 7.2), sharex=True)
+    flat = axes.ravel()
+    for ax, row in zip(flat, quotients):
+        label, y, err, panel_title = row
+        _errbar(ax, idx, y, err, label)
+        ax.set_title(panel_title, fontsize=10)
+        ax.set_ylabel(label, fontsize=8)
+    flat[-1].axis("off")
+    for ax in axes[-1, :3]:
+        ax.set_xlabel("window")
+    fig.suptitle(_title(
+        "Difference quotients. Bars: probe uncertainty, not a contraction test",
+        validated,
+    ))
+    fig.text(0.5, 0.005, quotient_note, ha="center", va="bottom", fontsize=8)
+    fig.tight_layout(rect=(0, 0.08, 1, 0.96))
+    fig.savefig(plot_dir / "traces_quotients_grid.png", dpi=140)
+    plt.close(fig)
+
+
+def _write_s_argand(plot_dir: Path, diag: dict, spectral_validated: bool) -> None:
+    """Leading eigenvalue of the parasitic block on the complex plane.
+
+    Task 1 asks ARPACK for one largest-magnitude value. S is real, so the
+    conjugate is an eigenvalue as well and is drawn with it. This is not a
+    partial Ritz cloud.
+    """
+    re = np.asarray(diag["rho_S_real"], dtype=np.float64).reshape(-1)
+    im = np.asarray(diag["rho_S_imag"], dtype=np.float64).reshape(-1)
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    theta = np.linspace(0.0, 2.0 * np.pi, 400)
+    ax.plot(np.cos(theta), np.sin(theta), color="0.45", lw=1.0, label=r"$|\lambda|=1$")
+    ax.axhline(0.0, color="0.85", lw=0.6)
+    ax.axvline(0.0, color="0.85", lw=0.6)
+    ax.scatter(re, im, s=28, zorder=3, label=r"leading eigenvalue of $S$")
+    conj = np.abs(im) > 1e-12
+    if np.any(conj):
+        ax.scatter(re[conj], -im[conj], s=28, zorder=3, marker="o", facecolors="none", edgecolors="C0", label="conjugate")
+    ax.scatter([0.0], [0.0], marker="x", s=70, c="k", zorder=4, label="0")
+    ax.scatter([1.0], [0.0], marker="+", s=120, c="C3", zorder=4, label="1")
+    radius = float(max(np.max(np.hypot(re, im)), 1.0) * 1.2)
+    ax.set_aspect("equal")
+    ax.set_xlim(-radius, radius)
+    ax.set_ylim(-radius, radius)
+    ax.set_xlabel("real")
+    ax.set_ylabel("imag")
+    ax.set_title(_title(r"Leading eigenvalue of parasitic $S$", spectral_validated))
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plot_dir / "s_argand.png", dpi=140)
+    plt.close(fig)
 
 
 def write_plots(
@@ -491,21 +815,25 @@ def write_plots(
     fu_err = quotient_halfwidth(diag["tr_A_ci95"], diag["n_fine"], dt)
 
     direct_panels = (
-        (diag["tr_Fu_over_N"], fu_err, r"Tr$(F_u)/N$"),
+        (diag["tr_Fu_over_N"], fu_err, r"$(\mathrm{Tr}\,A_n-N)/(N\Delta t)$"),
         (
             diag["tr_DFz_over_N"],
             quotient_halfwidth(diag["tr_DB_ci95"], diag["n_fine"], dt),
-            r"Tr$(DB)/(N\,dt)$ proxy",
+            r"$\mathrm{Tr}(DB_n)/(N\Delta t)$",
         ),
         (
             diag["tr_B_DPhi_n_quot"],
             quotient_halfwidth(diag["tr_B_DPhi_n_ci95"], diag["n_fine"], dt),
-            r"Tr$(B D\Phi'_n)/(N\,dt)$ physical",
+            r"$\mathrm{Tr}(B_n D\Phi'_n)/(N\Delta t)$",
         ),
-        (diag["tr_Heff_over_N"], None, r"$(Tr J - N)/(N dt)$"),
-        (diag["tr_J_over_N"], diag["tr_J_ci95"] / diag["n_fine"], r"Tr$(J)/N$"),
+        (
+            diag["tr_Heff_over_N"],
+            quotient_halfwidth(diag["tr_J_ci95"], diag["n_fine"], dt),
+            r"$(\mathrm{Tr}(A_n+B_n D\Phi'_n)-N)/(N\Delta t)$",
+        ),
+        (diag["tr_J_over_N"], diag["tr_J_ci95"] / diag["n_fine"], r"$\mathrm{Tr}(J_{\mathrm{graph}})/N$"),
     )
-    fig, axes = plt.subplots(len(direct_panels), 1, figsize=(6, 10), sharex=True)
+    fig, axes = plt.subplots(len(direct_panels), 1, figsize=(8.2, 12), sharex=True)
     for ax, (y, yerr, label) in zip(axes, direct_panels):
         _errbar(ax, idx, y, yerr, label)
         ax.set_ylabel(label)
@@ -514,16 +842,17 @@ def write_plots(
     fig.tight_layout()
     fig.savefig(plot_dir / "trace_split.png", dpi=140)
     plt.close(fig)
+    _write_trace_panels(plot_dir, diag, validated)
 
     parasitic_panels = (
         (
             diag["tr_Sigma_over_M"],
             quotient_halfwidth(diag["tr_S_ci95"], diag["n_coarse"], dt),
-            r"$(Tr S - M)/(M dt)$",
+            r"$(\mathrm{Tr}\,S_n-M)/(M\Delta t)$",
         ),
-        (diag["tr_S_over_M"], diag["tr_S_ci95"] / diag["n_coarse"], r"Tr$(S)/M$"),
+        (diag["tr_S_over_M"], diag["tr_S_ci95"] / diag["n_coarse"], r"$\mathrm{Tr}(S_n)/M$"),
     )
-    fig, axes = plt.subplots(len(parasitic_panels), 1, figsize=(6, 6), sharex=True)
+    fig, axes = plt.subplots(len(parasitic_panels), 1, figsize=(8.2, 6), sharex=True)
     for ax, (y, yerr, label) in zip(axes, parasitic_panels):
         _errbar(ax, idx, y, yerr, label)
         ax.set_ylabel(label)
@@ -558,6 +887,7 @@ def write_plots(
         fig.tight_layout()
         fig.savefig(plot_dir / "rho_S.png", dpi=140)
         plt.close(fig)
+        _write_s_argand(plot_dir, diag, spectral_validated)
 
     fig, ax = plt.subplots(figsize=(6, 4))
     _errbar(
@@ -586,9 +916,9 @@ def write_plots(
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|r_H\|$")
-    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|r_z\|$")
-    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho\|$")
+    ax.plot(lead, rolls["rH_norm"].mean(0), label=r"$\|r_H\|$ truncated first-factor")
+    ax.plot(lead, rolls["rZ_norm"].mean(0), label=r"$\|r_z\|$ truncated first-factor")
+    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho_n\|$")
     ax.set_xlabel("step")
     ax.legend()
     ax.set_title(_title("Channel norms", validated))
@@ -598,6 +928,7 @@ def write_plots(
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(lead, rolls["e_norm"].mean(0), label=r"$\|e\|$")
+    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho_n\|$")
     ax.plot(lead, rolls["eta_norm"].mean(0), label=r"$\|\eta\|$")
     ax.plot(lead, rolls["R"].mean(0), label=r"$R_n=\|e_n\|-I_n$")
     ax.set_xlabel("step")
@@ -608,12 +939,23 @@ def write_plots(
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(lead, rolls["e_norm"].mean(0), label=r"$\|e_n\|$")
+    ax.plot(lead, rolls["I"].mean(0), label=r"$I_n=\|\sum_{j<n}\epsilon^{u}_j\|$")
+    ax.plot(lead, rolls["rho_norm"].mean(0), label=r"$\|\rho_n\|$")
+    ax.set_xlabel("step")
+    ax.legend()
+    ax.set_title(_title(r"Fine error, accumulated injection, and $\rho$", validated))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "fine_injection_rho.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
     alignment = (
-        ("cos_e_rho", r"$\cos(e,\rho)$"),
-        ("cos_e_rH", r"$\cos(e,r_H)$"),
-        ("cos_e_rZ", r"$\cos(e,r_z)$"),
-        ("cos_rho_rH", r"$\cos(\rho,r_H)$"),
-        ("cos_rho_rZ", r"$\cos(\rho,r_z)$"),
+        ("cos_e_rho", r"$\cos(e_n,\rho_n)$"),
+        ("cos_e_rH", r"$\cos(e_n,r_H)$"),
+        ("cos_e_rZ", r"$\cos(e_n,r_z)$"),
+        ("cos_rho_rH", r"$\cos(\rho_n,r_H)$"),
+        ("cos_rho_rZ", r"$\cos(\rho_n,r_z)$"),
     )
     for key, label in alignment:
         ax.plot(lead, _defined_mean(rolls[key]), label=label)
@@ -626,15 +968,10 @@ def write_plots(
     plt.close(fig)
 
     def _bundle(ax, series, label):
-        y = np.asarray(series, dtype=np.float64)
-        if y.ndim == 1:
-            y = y[None, :]
-        for row in y:
-            ax.plot(lead, row, color="0.8", lw=0.5)
-        mean = np.nanmean(y, axis=0)
-        std = np.nanstd(y, axis=0)
+        """Aggregate only. The shade is the 16th–84th percentile, not a CI."""
+        mean, lo, hi, _n_valid = percentile_band(series)
         ax.plot(lead, mean, label=label)
-        ax.fill_between(lead, mean - std, mean + std, alpha=0.15)
+        ax.fill_between(lead, lo, hi, alpha=0.15)
 
     fig, ax = plt.subplots(figsize=(6, 4))
     _bundle(ax, rolls["rH_norm"], r"$\|r_H\|$ truncated")
@@ -692,30 +1029,406 @@ def write_plots(
     fig.savefig(plot_dir / "linearized_error.png", dpi=140)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(7, 5))
-    full_cos = (
-        ("cos_rH_rZ", r"$\cos(r_H,r_z)$"),
-        ("cos_e_rho", r"$\cos(e,\rho)$"),
-        ("cos_e_rH", r"$\cos(e,r_H)$"),
-        ("cos_e_rZ", r"$\cos(e,r_z)$"),
-        ("cos_rho_rH", r"$\cos(\rho,r_H)$"),
-        ("cos_rho_rZ", r"$\cos(\rho,r_z)$"),
-        ("cos_e_inj", r"$\cos(e,\mathrm{inj})$"),
-        ("cos_rho_inj", r"$\cos(\rho,\mathrm{inj})$"),
-        ("cos_rH_inj", r"$\cos(r_H,\mathrm{inj})$"),
-        ("cos_rZ_inj", r"$\cos(r_z,\mathrm{inj})$"),
-        ("cos_eta_inj", r"$\cos(\eta,Z)$"),
-        ("cos_eta_eta_lin", r"$\cos(\eta,\eta_{lin})$"),
-        ("cos_e_e_lin", r"$\cos(e,e_{lin})$"),
+    cosine_panels = (
+        (
+            "cosine_retention.png",
+            "Retention and channel alignment",
+            (
+                ("cos_rH_rZ", r"$\cos(r_H, r_z)$"),
+                ("cos_e_rho", r"$\cos(e_n, \rho_n)$"),
+                ("cos_e_rH", r"$\cos(e_n, r_H)$"),
+                ("cos_e_rZ", r"$\cos(e_n, r_z)$"),
+                ("cos_rho_rH", r"$\cos(\rho_n, r_H)$"),
+                ("cos_rho_rZ", r"$\cos(\rho_n, r_z)$"),
+            ),
+        ),
+        (
+            "cosine_fine_injection.png",
+            "Fine injection",
+            (
+                ("cos_e_inj", r"$\cos(e_n, \sum_{j<n}\epsilon^{u}_j)$"),
+                ("cos_rho_inj", r"$\cos(\rho_n, \sum_{j<n}\epsilon^{u}_j)$"),
+                ("cos_rH_inj", r"$\cos(r_H, \sum_{j<n}\epsilon^{u}_j)$"),
+                ("cos_rZ_inj", r"$\cos(r_z, \sum_{j<n}\epsilon^{u}_j)$"),
+            ),
+        ),
+        (
+            "cosine_latent_injection.png",
+            "Off-graph injection",
+            (
+                ("cos_eta_inj", r"$\cos(\eta_n, \sum_{j<n}\xi_j)$"),
+                ("cos_nu_xi", r"$\cos(\nu_n, \sum_{j<n}\xi_j)$"),
+            ),
+        ),
+        (
+            "cosine_linearized.png",
+            "Actual versus linearized",
+            (
+                ("cos_e_e_lin", r"$\cos(e_n, e^{lin}_n)$"),
+                ("cos_eta_eta_lin", r"$\cos(\eta_n, \eta^{lin}_n)$"),
+            ),
+        ),
     )
-    for key, label in full_cos:
-        _bundle(ax, rolls[key], label)
-    ax.set_ylim(-1.05, 1.05)
+    n_valid = {}
+    fig_all, axes_all = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
+    for ax, (filename, title, series) in zip(axes_all.ravel(), cosine_panels):
+        fig_one, ax_one = plt.subplots(figsize=(7, 4.2))
+        for key, label in series:
+            if key not in rolls:
+                continue
+            _bundle(ax, rolls[key], label)
+            _bundle(ax_one, rolls[key], label)
+            _mean, _lo, _hi, count = percentile_band(rolls[key])
+            n_valid[key] = count
+        for target in (ax, ax_one):
+            target.set_ylim(-1.0, 1.0)
+            target.set_xlabel("step")
+            target.legend(fontsize=8)
+            target.set_title(_title(title, validated))
+        fig_one.tight_layout()
+        fig_one.savefig(plot_dir / filename, dpi=140)
+        plt.close(fig_one)
+    fig_all.suptitle(
+        _title(
+            "Cosines. Shade: empirical 16th–84th percentile across windows, not a CI",
+            validated,
+        )
+    )
+    note = (
+        r"$e_n=\hat{u}_n-u_n$, $\eta_n=\hat{z}_{n+1}-Du_{n+1}$, "
+        r"$\nu_n=\eta_n-D\Phi'_n e_n$, $\rho_n=e_n-\sum_{j<n}\epsilon^{u}_j$."
+        "\n"
+        r"$r_H,r_z$: truncated first-factor channels. "
+        r"$\epsilon^{u},\epsilon^{z}$: one-step heads. $\xi=\epsilon^{z}-D\Phi'_{n+1}\epsilon^{u}$."
+        "\n"
+        r"Legacy cos_eta_inj is $\cos(\eta_n,\sum_{j<n}\xi_j)$, not $\sum\epsilon^{z}$."
+    )
+    fig_all.text(0.01, 0.01, note, fontsize=8)
+    fig_all.tight_layout(rect=(0, 0.08, 1, 1))
+    fig_all.savefig(plot_dir / "cosine_all.png", dpi=140)
+    plt.close(fig_all)
+    if n_valid:
+        np.savez(plot_dir / "cosine_n_valid.npz", **{key: np.asarray(val) for key, val in n_valid.items()})
+    _write_latent_channel_plots(plot_dir, diag, rolls, validated)
+
+
+def _write_latent_channel_plots(plot_dir: Path, diag: dict, rolls: dict, validated: bool) -> None:
+    """Latent figures in the high-resolution panel layout.
+
+    Telescoping channels use r_H^eta, r_z^eta, and rho^eta.
+    First-factor channels stay on their own figure.
+    Off-graph xi and nu are not drawn here.
+    """
+    if "p_norm" not in rolls or "tr_C_Dplus_quot" not in diag:
+        return
+    n_valid = {}
+
+    telescoping_note = "\n".join((
+        r"$r_H^{\eta}=\sum_{k<n} C_k e_k=\Delta t\sum_{k<n} E_{u,k} e_k$",
+        r"$r_z^{\eta}=\sum_{k<n}(K_k-I)\eta_k=\Delta t\sum_{k<n} E_{z,k}\eta_k$",
+        r"$\rho^{\eta}=\eta_n-\sum_{k<n}\varepsilon_k^z$",
+        r"Linearized recursion, zero initial error: $\rho^{\eta}=r_H^{\eta}+r_z^{\eta}$.",
+        r"Nonlinear rollout: the difference is the Taylor remainder.",
+        r"These sums are not the first-factor channels.",
+    ))
+    first_factor_note = "\n".join((
+        r"$(r_H^{\eta})^{[1]}=\sum_{k<n} C_k(\sum_{i<k}\varepsilon_i^u)$",
+        r"$(r_z^{\eta})^{[1]}=\sum_{k<n}(K_k-I)(\sum_{i<k}\varepsilon_i^z)$",
+        r"Truncated first-factor expansion. Not $r_H^{\eta}$ or $r_z^{\eta}$.",
+    ))
+
+    def _series(key: str) -> np.ndarray | None:
+        if key not in rolls:
+            return None
+        return np.asarray(rolls[key], dtype=np.float64)
+
+    def _paint(ax, series, label, color, band: bool):
+        values = np.asarray(series, dtype=np.float64)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        x = np.arange(values.shape[1])
+        if band:
+            mean, lo, hi, _count = percentile_band(values)
+            ax.plot(x, mean, color=color, label=label)
+            ax.fill_between(x, lo, hi, color=color, alpha=0.15)
+        else:
+            ax.plot(x, values.mean(0), color=color, label=label)
+
+    def _finish(fig, ax, title, note: str | None, cosine: bool, filename: str):
+        ax.set_xlabel("step")
+        ax.legend(fontsize=8)
+        ax.set_title(_title(title, validated))
+        if cosine:
+            ax.set_ylim(-1.0, 1.0)
+        if note:
+            lines = [line for line in note.split("\n") if line]
+            fig.text(0.01, 0.005, "\n".join(lines), fontsize=8, va="bottom")
+            fig.tight_layout(rect=(0, min(0.34, 0.032 * len(lines) + 0.02), 1, 1))
+        else:
+            fig.tight_layout()
+        fig.savefig(plot_dir / filename, dpi=140)
+        plt.close(fig)
+
+    def _panel(filename, title, rows, note=None, cosine=False, band=False, figsize=(6, 4)):
+        fig, ax = plt.subplots(figsize=figsize)
+        drawn = False
+        for index, (key, label) in enumerate(rows):
+            series = _series(key) if isinstance(key, str) else key
+            if series is None:
+                continue
+            _paint(ax, series, label, f"C{index}", band)
+            if isinstance(key, str):
+                _mean, _lo, _hi, count = percentile_band(series)
+                n_valid[key] = count
+            drawn = True
+        if not drawn:
+            plt.close(fig)
+            return
+        _finish(fig, ax, title, note, cosine, filename)
+
+    if "eta_norm" in rolls and "I_z_norm" in rolls:
+        rolls["R_eta"] = (
+            np.asarray(rolls["eta_norm"], dtype=np.float64)
+            - np.asarray(rolls["I_z_norm"], dtype=np.float64)
+        )
+
+    _panel(
+        "latent_injection_rho.png",
+        r"Latent error, accumulated $\varepsilon^z$, and $\rho^{\eta}$",
+        (
+            ("eta_norm", r"$\|\eta\|$"),
+            ("I_z_norm", r"$\|\sum_{j<n}\varepsilon_j^z\|$"),
+            ("rho_eta_norm", r"$\|\rho^{\eta}\|$"),
+        ),
+        note=telescoping_note,
+        figsize=(6.6, 4.8),
+    )
+    _panel(
+        "latent_injection_retention.png",
+        r"Latent injection and scalar retention",
+        (
+            ("I_z_norm", r"$\|\sum_{j<n}\varepsilon_j^z\|$"),
+            ("R_eta", r"$R_n^{\eta}=\|\eta_n\|-\|\sum_{k<n}\varepsilon_k^z\|$"),
+        ),
+        note=r"$R_n^{\eta}$ is the difference of the two norms, not the norm of $\rho^{\eta}$.",
+        figsize=(6.6, 4.6),
+    )
+    channel_rows = (
+        ("r_u_to_z_norm", r"$\|r_H^{\eta}\|$"),
+        ("r_z_to_z_norm", r"$\|r_z^{\eta}\|$"),
+        ("rho_eta_norm", r"$\|\rho^{\eta}\|$"),
+    )
+    _panel(
+        "latent_channel_norms.png",
+        r"Telescoping latent channel norms",
+        channel_rows,
+        note=telescoping_note,
+        figsize=(6.6, 4.8),
+    )
+    _panel(
+        "latent_retention_channels.png",
+        r"Telescoping latent channels",
+        channel_rows,
+        note=telescoping_note,
+        band=True,
+        figsize=(6.6, 4.8),
+    )
+    _panel(
+        "latent_first_factor_channels.png",
+        r"First-factor latent channels",
+        (
+            ("r_u_to_z_first_norm", r"$\|(r_H^{\eta})^{[1]}\|$"),
+            ("r_z_to_z_first_norm", r"$\|(r_z^{\eta})^{[1]}\|$"),
+        ),
+        note=first_factor_note,
+        band=True,
+        figsize=(6.6, 4.6),
+    )
+    remainder_note = (
+        "\n".join((
+            r"$\|\rho^{\eta}-r_H^{\eta}-r_z^{\eta}\|$ is the Taylor remainder.",
+            r"That norm is not in these saved results.",
+            r"The curve is the closure $\|\rho^{\eta}-r_H^{\eta}-r_z^{\eta}-\sum\mathrm{rem}\|$.",
+        ))
+        if "channel_remainder_norm" not in rolls
+        else "\n".join((
+            r"Linearized recursion, zero initial error: $\rho^{\eta}=r_H^{\eta}+r_z^{\eta}$.",
+            r"The closure also subtracts $\sum\mathrm{rem}$.",
+        ))
+    )
+    recon_rows = []
+    if "channel_remainder_norm" in rolls:
+        recon_rows.append(
+            ("channel_remainder_norm", r"$\|\rho^{\eta}-r_H^{\eta}-r_z^{\eta}\|$")
+        )
+    recon_rows.append(
+        (
+            "eta_recon_norm",
+            r"$\|\rho^{\eta}-r_H^{\eta}-r_z^{\eta}-\sum\mathrm{rem}\|$",
+        )
+    )
+    _panel(
+        "latent_retention_reconstruction.png",
+        "Latent reconstruction residual",
+        tuple(recon_rows),
+        note=remainder_note,
+        band=True,
+        figsize=(6.6, 4.8),
+    )
+
+    def _band(ax, key, label, zero: bool = True, color: str | None = None):
+        series = _series(key)
+        if series is None:
+            return None
+        mean, lo, hi, count = percentile_band(series)
+        x = np.arange(mean.shape[0])
+        ax.plot(x, mean, color=color, label=label)
+        ax.fill_between(x, lo, hi, color=color, alpha=0.15)
+        if zero:
+            ax.axhline(0.0, color="0.45", lw=0.6)
+        n_valid[key] = count
+        return x
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    kind = str(np.asarray(diag["approximation"]).reshape(-1)[0])
+    q_name = r"Q_n=D" if kind == "proxy" else r"Q_n=D\Phi'_n"
+    for key, label in (
+        ("cos_p_eta", r"$\cos(p_n,\eta_n)$"),
+        ("cos_p_eta_next", r"$\cos(p_n,\eta_{n+1})$"),
+        ("cos_p_Keta", r"$\cos(p_n,K_n\eta_n)$"),
+        ("cos_p_eps_z", r"$\cos(p_n,\varepsilon_n^z)$"),
+        ("cos_p_b", r"$\cos(p_n,b_n)$"),
+        ("cos_Qe_eta", rf"$\cos({q_name} e_n,\eta_n)$"),
+    ):
+        _band(ax, key, label)
+    ax.set_ylim(-1.0, 1.0)
     ax.set_xlabel("step")
-    ax.legend(fontsize=7, ncol=2)
-    ax.set_title(_title("All cosine diagnostics; NaNs stay gaps", validated))
+    ax.legend(fontsize=8)
+    ax.set_title(_title("Fine-to-latent cosines. Band is 16–84 pct, not a CI", validated))
     fig.tight_layout()
-    fig.savefig(plot_dir / "cosine_all.png", dpi=140)
+    fig.savefig(plot_dir / "cosine_fine_to_latent.png", dpi=140)
+    plt.close(fig)
+
+    _panel(
+        "cosine_latent_retention.png",
+        "Latent retention and channel alignment",
+        (
+            ("cos_ru_rz", r"$\cos(r_H^{\eta}, r_z^{\eta})$"),
+            ("cos_eta_rho", r"$\cos(\eta, \rho^{\eta})$"),
+            ("cos_ru_eta", r"$\cos(\eta, r_H^{\eta})$"),
+            ("cos_rz_eta", r"$\cos(\eta, r_z^{\eta})$"),
+            ("cos_ru_rho", r"$\cos(\rho^{\eta}, r_H^{\eta})$"),
+            ("cos_rho_rz", r"$\cos(\rho^{\eta}, r_z^{\eta})$"),
+        ),
+        note=telescoping_note,
+        cosine=True,
+        band=True,
+        figsize=(7, 4.8),
+    )
+    _panel(
+        "cosine_latent_eps_z.png",
+        r"Latent injection, $\sum_{j<n}\varepsilon_j^z$",
+        (
+            ("cos_eta_eps_z", r"$\cos(\eta, \sum_{j<n}\varepsilon_j^z)$"),
+            ("cos_rho_Iz", r"$\cos(\rho^{\eta}, \sum_{j<n}\varepsilon_j^z)$"),
+            ("cos_ru_Iz", r"$\cos(r_H^{\eta}, \sum_{j<n}\varepsilon_j^z)$"),
+            ("cos_rz_Iz", r"$\cos(r_z^{\eta}, \sum_{j<n}\varepsilon_j^z)$"),
+        ),
+        note=telescoping_note + "\n" + r"This sum is $\varepsilon^z$, not the off-graph injection $\xi$.",
+        cosine=True,
+        band=True,
+        figsize=(7, 5.0),
+    )
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    for key, label in (
+        ("cross_bp", r"$2\langle b_n,p_n\rangle$"),
+        ("p_sq", r"$\|p_n\|^2$"),
+        ("delta_fine", r"$\Delta_{\mathrm{fine}}=2\langle b,p\rangle+\|p\|^2$"),
+        ("eta_sq_gap", r"$\|\eta\|^2-\|\sum_{j<n}\varepsilon_j^z\|^2$"),
+        ("cross_Iz_rho", r"$2\langle\sum_{j<n}\varepsilon_j^z,\rho^{\eta}\rangle$"),
+        ("rho_eta_sq", r"$\|\rho^{\eta}\|^2$"),
+        ("cross_Iz_ru", r"$2\langle\sum_{j<n}\varepsilon_j^z,r_H^{\eta}\rangle$"),
+        ("cross_Iz_rz", r"$2\langle\sum_{j<n}\varepsilon_j^z,r_z^{\eta}\rangle$"),
+        ("cross_Iz_rem", r"$2\langle\sum_{j<n}\varepsilon_j^z,\sum\mathrm{rem}\rangle$"),
+    ):
+        _band(ax, key, label)
+    ax.set_xlabel("rollout step")
+    ax.legend(fontsize=7)
+    ax.set_title(_title(
+        r"Local squared-error budget. $\Delta_{\mathrm{fine}}=\|b+p\|^2-\|b\|^2$",
+        validated,
+    ))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "latent_fine_error_budget.png", dpi=140)
+    plt.close(fig)
+    if n_valid:
+        np.savez(
+            plot_dir / "latent_channel_n_valid.npz",
+            **{f"n_{i}": np.asarray(val) for i, val in enumerate(n_valid.values())},
+        )
+
+    idx = np.arange(np.asarray(diag["tr_K_over_M"]).shape[0])
+    dt = float(np.asarray(diag["dt"]))
+    n_coarse = np.asarray(diag["n_coarse"], dtype=np.float64)
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    split_rows = (
+        (diag["tr_K_over_M"], diag["tr_K_ci95"] / n_coarse, r"$\mathrm{Tr}(K)/M$"),
+        (
+            diag["tr_Ez_over_M"],
+            diag["tr_K_ci95"] / (n_coarse * dt),
+            r"$\mathrm{Tr}(E_z)/M=(\mathrm{Tr}K-M)/(M\Delta t)$",
+        ),
+        (
+            diag["tr_minus_Qnext_B_over_Mdt"],
+            diag["tr_DPhi_next_B_ci95"] / (n_coarse * dt),
+            r"$-\mathrm{Tr}(Q_{n+1}B)/(M\Delta t)$",
+        ),
+        (
+            diag["tr_Sigma_over_M"],
+            diag["tr_S_ci95"] / (n_coarse * dt),
+            r"$\mathrm{Tr}(\Sigma)/M=(\mathrm{Tr}S-M)/(M\Delta t)$",
+        ),
+    )
+    for y, err, label in split_rows:
+        ax.errorbar(idx, y, yerr=err, marker="o", capsize=3, label=label)
+    ax.axhline(0.0, color="0.45", lw=0.6)
+    ax.set_xlabel("snapshot")
+    ax.legend(fontsize=7)
+    ax.set_title(_title(
+        "Paired-probe latent trace split. Bars are probe 95% CIs",
+        validated,
+    ))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "latent_trace_split.png", dpi=140)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    ax.errorbar(
+        idx,
+        diag["tr_C_Dplus_quot"],
+        yerr=diag["tr_C_Dplus_ci95"] / (n_coarse * dt),
+        marker="o",
+        capsize=3,
+        label=r"$\mathrm{Tr}(C D^+)/(M\Delta t)$, block-constant lifts",
+    )
+    ax.errorbar(
+        idx,
+        diag["gain_C_over_N"],
+        yerr=diag["gain_C_ci95"],
+        marker="s",
+        capsize=3,
+        label=r"$\|C\|_F^2/N$ squared gain",
+    )
+    ax.axhline(0.0, color="0.45", lw=0.6)
+    ax.set_xlabel("snapshot")
+    ax.legend(fontsize=7)
+    ax.set_title(_title(
+        "Fine-to-latent tendency under lifted coarse probes, and squared gain",
+        validated,
+    ))
+    fig.tight_layout()
+    fig.savefig(plot_dir / "fine_to_latent_trace_gain.png", dpi=140)
     plt.close(fig)
 
 
@@ -1113,6 +1826,18 @@ def write_final(
         "is_exact_physical_jvp": False,
         "py2d_root": primary.get("py2d_root"),
         "physical_jvp_note": primary.get("physical_jvp_note"),
+        "tolerances": primary.get("tolerances"),
+        "legacy_names": {
+            "cos_eta_inj": "cos(eta_n, sum_{j<n} xi_j)",
+            "cos_e_inj": "cos(e_n, sum_{j<n} epsilon^u_j)",
+            "cos_rho_inj": "cos(rho_n, sum_{j<n} epsilon^u_j)",
+            "cos_rH_inj": "cos(r_H, sum_{j<n} epsilon^u_j)",
+            "cos_rZ_inj": "cos(r_z, sum_{j<n} epsilon^u_j)",
+            "I": "||sum_{j<n} epsilon^u_j||",
+            "R": "||e_n|| - I(t_n)",
+            "cos_eta_eps_z": "cos(eta_n, sum_{j<n} epsilon^z_j)",
+            "cos_nu_xi": "cos(nu_n, sum_{j<n} xi_j)",
+        },
         "difference_quotient": (
             "F=(g-u)/dt and Tr(DB)/(N dt) are labels only; the network is direct-step. "
             "tr_B_DPhi_n is the physical feedback trace and is not Tr(DB)."
@@ -1154,6 +1879,12 @@ def write_final(
             "alpha": args.alpha,
             "beta": args.beta,
             "solver_dt": args.solver_dt,
+            "dns_data": args.dns_data or str(
+                Path(
+                    "/pscratch/sd/d/divyam/py2d_runs/paper/results/"
+                    "Re10000_fkx4fky4_r0.1_b20/NoSGS/NX512/dt0.0001_IC1/data"
+                )
+            ),
         },
         "failed_tests": failed,
         "num_coarse": primary["num_coarse"],
@@ -1323,6 +2054,8 @@ def _common_worker_cmd(args: argparse.Namespace, script: str, rank: int) -> list
         str(args.fkx),
         "--fky",
         str(args.fky),
+        "--dns-data",
+        args.dns_data,
         "--alpha",
         str(args.alpha),
         "--beta",
@@ -1403,6 +2136,8 @@ def run_orchestrator(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.dns_data:
+        os.environ["HINE_DNS_DATA"] = args.dns_data
     if args.worker:
         run_worker(args)
     elif args.n_gpus <= 1:

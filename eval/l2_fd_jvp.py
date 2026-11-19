@@ -110,6 +110,19 @@ def apply_D(v: torch.Tensor, ds: int) -> torch.Tensor:
     return F.avg_pool2d(v, kernel_size=ds, stride=ds)
 
 
+def apply_Dplus(z: torch.Tensor, ds: int) -> torch.Tensor:
+    """Block replication, the right inverse of apply_D.
+
+    Each coarse value is copied onto its ds-by-ds fine block. Average pooling
+    then returns that coarse field, so D Dplus = I_M. Dplus D is the
+    block-average projection, not I_N. Probes through Dplus see only
+    block-constant fine directions.
+    """
+    if int(ds) < 1:
+        raise ValueError(f"ds must be positive, got {ds}")
+    return z.repeat_interleave(int(ds), dim=-1).repeat_interleave(int(ds), dim=-2)
+
+
 def lock_precision() -> dict:
     """Float32 matmul settings for finite-difference Jacobian actions.
 
