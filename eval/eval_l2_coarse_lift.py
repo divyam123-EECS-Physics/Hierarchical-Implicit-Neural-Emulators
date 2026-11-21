@@ -87,7 +87,7 @@ from plot_l2_coarse_lift import (
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=["smoke", "budget", "spectral"], required=True)
+    p.add_argument("--mode", choices=["smoke", "budget", "spectral", "trace"], required=True)
     p.add_argument(
         "--checkpoint",
         default="/pscratch/sd/d/divyam/hine_runs/plus_L2_m32/checkpoint-last.pth",
@@ -111,6 +111,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--gpu-rank", type=int, default=0)
     p.add_argument("--resume", action="store_true", default=True)
     p.add_argument("--no-resume", action="store_false", dest="resume")
+    p.add_argument("--smoke", action="store_true", help="Trace mode only: one window, steps 0 and 1, two probes.")
+    p.add_argument("--n-probes", type=int, default=32)
+    p.add_argument("--steps", default="", help="Comma-separated trace steps. Default is 0,20,38.")
+    p.add_argument("--l1-checkpoint", default="", help="Optional L=1 checkpoint for tr(J-I)/N only.")
     return p.parse_args(argv)
 
 
@@ -136,6 +140,8 @@ def code_hashes() -> dict[str, str]:
         "coarse_lift_budget.py",
         "eval_l2_coarse_lift.py",
         "plot_l2_coarse_lift.py",
+        "feedback_trace.py",
+        "plot_feedback_traces.py",
     ]
     return {name: sha256_file(_EVAL / name) for name in names}
 
@@ -865,6 +871,14 @@ def main(argv=None) -> int:
     samples = load_manifest(Path(args.sample_index))["samples"]
     for entry, sample in zip(samples, range(len(samples))):
         entry["sample"] = int(sample)
+    if args.mode == "trace":
+        if args.n_gpus != 1:
+            raise SystemExit("trace mode uses one GPU; start a separate job for each checkpoint")
+        checkpoint_sha = sha256_file(Path(args.checkpoint)) if Path(args.checkpoint).is_file() else "missing"
+        prepare(args, save_dir, samples, checkpoint_sha)
+        from feedback_trace import run_trace
+
+        return run_trace(args, samples, save_dir, device_from_args(args))
     if args.worker or args.n_gpus == 1:
         if not (save_dir / "launch.json").is_file():
             prepare(args, save_dir, samples, sha256_file(Path(args.checkpoint)) if Path(args.checkpoint).is_file() else "missing")

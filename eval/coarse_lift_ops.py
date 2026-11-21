@@ -567,3 +567,106 @@ def two_step_parts(op_n: LiftedBlocks, op_np1: LiftedBlocks, e_H) -> dict:
         "rms_BC": field_rms(bc),
         "cosine_AA_BC": cosine(aa, bc),
     }
+
+
+def _flat_dot(left: torch.Tensor, right: torch.Tensor) -> float:
+    return float(torch.dot(left.detach().reshape(-1).double(), right.detach().reshape(-1).double()))
+
+
+def route_matrices(A_n, A_np1, B_np1, C_n, lift) -> dict:
+    """Dense two-step split. lift is D+, not D*. B_np1 is the return at the next frame."""
+    direct_map = np.asarray(A_np1, dtype=np.float64) @ np.asarray(A_n, dtype=np.float64)
+    loop = np.asarray(B_np1, dtype=np.float64) @ np.asarray(C_n, dtype=np.float64)
+    lifted = np.asarray(lift, dtype=np.float64) @ np.asarray(C_n, dtype=np.float64)
+    revised = loop - lifted
+    n = int(direct_map.shape[0])
+    delta = (2.0 * np.sum(direct_map * loop) + np.sum(loop * loop)) / n
+    return {
+        "T": direct_map,
+        "La": lifted,
+        "Lb": revised,
+        "L": loop,
+        "tau_a": float(np.trace(lifted) / n),
+        "tau_b": float(np.trace(revised) / n),
+        "tau_loop": float(np.trace(loop) / n),
+        "delta_loop": float(delta),
+    }
+
+
+def sign_probes(n: int) -> np.ndarray:
+    from itertools import product
+
+    return np.asarray(list(product([-1.0, 1.0], repeat=int(n))), dtype=np.float64)
+
+
+def probe_quadratics(operator: np.ndarray, probes: np.ndarray) -> np.ndarray:
+    width = int(operator.shape[0])
+    return np.asarray([float(v @ operator @ v) / width for v in probes], dtype=np.float64)
+
+
+def probe_energy(direct_map: np.ndarray, loop: np.ndarray, probes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    width = int(direct_map.shape[0])
+    primary = []
+    check = []
+    for vector in probes:
+        direct = direct_map @ vector
+        image = loop @ vector
+        primary.append((2.0 * float(np.dot(direct, image)) + float(np.dot(image, image))) / width)
+        total = direct + image
+        check.append((float(np.dot(total, total)) - float(np.dot(direct, direct))) / width)
+    return np.asarray(primary), np.asarray(check)
+
+
+def mc_mean_se(values) -> tuple[float, float]:
+    finite = np.asarray(values, dtype=np.float64).reshape(-1)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return float("nan"), float("nan")
+    mean = float(finite.mean())
+    if finite.size < 2:
+        return mean, float("nan")
+    return mean, float(finite.std(ddof=1) / np.sqrt(finite.size))
+
+
+def feedback_action(op_n: LiftedBlocks, op_np1: LiftedBlocks, v_phys) -> dict:
+    """Physical split of one fine probe with zero latent perturbation.
+
+    lift = D+ C_n v enters a_{n+2}. revise = (B_{n+1} - D+) C_n v enters b_{n+2}.
+    direct + loop is the fine response and is checked against one joint JVP.
+    """
+    probe = _as_like(v_phys, op_n.point.u)
+    with torch.enable_grad():
+        fine_n, latent_n = jvp_both_u(op_n.step_fn, op_n.point, op_n._model(probe))
+    direct_in = op_n._physical(fine_n).detach()
+    coarse = op_n._physical(latent_n).detach()
+    lift = op_n.D_dagger(coarse)
+    loop = op_np1.B(coarse)
+    revise = (loop - lift).detach()
+    direct = op_np1.A(direct_in)
+    composed_fine, _latent = op_np1.augmented(direct_in, coarse)
+    total = (direct + loop).detach()
+    width = op_n.n_fine
+    tau_a = _flat_dot(probe, lift) / width
+    tau_b = _flat_dot(probe, revise) / width
+    tau_loop = _flat_dot(probe, loop) / width
+    return {
+        "lift": lift.detach(),
+        "revise": revise,
+        "loop": loop.detach(),
+        "direct": direct.detach(),
+        "tau_a": tau_a,
+        "tau_b": tau_b,
+        "tau_loop": tau_loop,
+        "tau_A": _flat_dot(probe, direct_in) / width - 1.0,
+        "delta_loop": (2.0 * _flat_dot(direct, loop) + _flat_dot(loop, loop)) / width,
+        "delta_check": (_flat_dot(total, total) - _flat_dot(direct, direct)) / width,
+        "residual": tau_a + tau_b - tau_loop,
+        "sum_vs_composed_rel": _rel(total.detach().cpu().numpy(), composed_fine.detach().cpu().numpy()),
+    }
+
+
+def latent_shift(op: LiftedBlocks, w_phys) -> float:
+    """tr estimator v^T (K - I) v / M for one unnormalized latent probe."""
+    probe = _as_like(w_phys, op.point.z)
+    image = op.K(probe)
+    return _flat_dot(probe, image) / op.n_coarse - 1.0

@@ -27,8 +27,14 @@ from coarse_lift_ops import (
     cosine,
     directional_gains,
     jvp_fd_report,
+    feedback_action,
+    latent_shift,
+    probe_energy,
+    probe_quadratics,
     projector_identity_report,
     rms_scale,
+    route_matrices,
+    sign_probes,
     torch_matches_numpy_pool,
     two_step_parts,
 )
@@ -199,6 +205,83 @@ def test_two_step_identity_and_masked_cosine():
     assert abs(mixed["rms"] - 1.0) < 1e-12
 
 
+def test_feedback_route_dense_and_torch():
+    """N=4, M=1 example with different operators at the two frames."""
+    eye = np.eye(4)
+    lift = np.ones((4, 1))
+    A0 = np.diag([0.8, 0.9, 1.0, 1.1])
+    A1 = np.diag([1.0, 0.9, 0.8, 0.7])
+    B0 = np.array([[0.6, 0.7, 0.8, 0.9]]).T
+    B1 = np.array([[1.6, 1.2, 0.8, 1.2]]).T
+    C0 = np.array([[-0.10, -0.05, -0.03, -0.02]])
+    C1 = 0.5 * C0
+    K0 = np.array([[0.75]])
+    Q = eye - lift @ np.full((1, 4), 0.25)
+    routes = route_matrices(A0, A1, B1, C0, lift)
+    assert abs(routes["tau_a"] + 0.05) < 1e-12
+    assert abs(routes["tau_b"] + 0.017) < 1e-12
+    assert abs(routes["tau_loop"] + 0.067) < 1e-12
+    assert abs(routes["delta_loop"] + 0.086164) < 5e-7
+    assert abs(routes["tau_a"] + routes["tau_b"] - routes["tau_loop"]) < 1e-12
+    probes = sign_probes(4)
+    for name, matrix in (("tau_a", routes["La"]), ("tau_b", routes["Lb"]), ("tau_loop", routes["L"])):
+        samples = probe_quadratics(matrix, probes)
+        assert abs(float(samples.mean()) - routes[name]) < 1e-12
+    energy, check = probe_energy(routes["T"], routes["L"], probes)
+    assert abs(float(energy.mean()) - routes["delta_loop"]) < 1e-12
+    assert np.allclose(check, energy, atol=1e-12)
+    star = route_matrices(A0, A1, B1, C0, lift / 4.0)
+    assert abs(star["tau_a"] + 0.05) > 1e-3
+    wrong_frame = route_matrices(A0, A1, B0, C0, lift)
+    assert abs(wrong_frame["tau_loop"] + 0.067) > 1e-3
+
+    a = np.array([0.2, -0.1, 0.3, 0.5])
+    b = np.array([0.6, -0.7, 0.4, -0.2])
+    eta = np.array([0.15])
+    u1 = np.array([1.0, 2.0, -1.0, 0.0])
+    eu = np.array([0.01, -0.02, 0.03, 0.04])
+    ez = np.array([-0.04])
+    block = np.block([[np.zeros((4, 4)), np.zeros((4, 4)), lift], [A0, A0, B0 - lift], [C0, C0, K0]])
+    forcing = np.concatenate([-Q @ u1, Q @ u1 + eu, ez])
+    e1 = A0 @ (a + b) + (B0 @ eta).reshape(-1) + eu
+    eta1 = (C0 @ (a + b)).reshape(-1) + (K0 @ eta).reshape(-1) + ez
+    z_hat = 0.25 * float(u1.sum()) + float(eta.reshape(-1)[0])
+    expected = np.concatenate([lift.reshape(-1) * z_hat - u1, u1 + e1 - lift.reshape(-1) * z_hat, eta1])
+    got = block @ np.concatenate([a, b, eta]) + forcing
+    assert np.allclose(got, expected, atol=1e-12)
+
+    def step_of(A, B, C, K):
+        mats = [torch.tensor(item, dtype=torch.float64) for item in (A, B, C, K)]
+
+        def step(u, z, _mats=mats):
+            fine = _mats[0] @ u.reshape(-1) + _mats[1] @ z.reshape(-1)
+            coarse = _mats[2] @ u.reshape(-1) + _mats[3] @ z.reshape(-1)
+            return fine.reshape(u.shape), coarse.reshape(z.shape)
+
+        return step
+
+    blank = torch.zeros(1, 1, 2, 2, dtype=torch.float64)
+    coarse = torch.zeros(1, 1, 1, 1, dtype=torch.float64)
+    first = LiftedBlocks(step_of(A0, B0, C0, K0), _point(blank, coarse), 2, norm=10.0)
+    second = LiftedBlocks(step_of(A1, B1, C1, np.array([[0.2]])), _point(blank.clone(), coarse.clone()), 2, norm=10.0)
+    collected = {key: [] for key in ("tau_a", "tau_b", "tau_loop", "delta_loop", "delta_check", "residual")}
+    rels = []
+    for vector in probes:
+        action = feedback_action(first, second, vector.reshape(1, 1, 2, 2))
+        for key in collected:
+            collected[key].append(action[key])
+        rels.append(action["sum_vs_composed_rel"])
+    assert max(rels) < 1e-8
+    assert max(abs(np.asarray(collected["residual"]))) < 1e-12
+    assert abs(float(np.mean(collected["tau_a"])) + 0.05) < 1e-12
+    assert abs(float(np.mean(collected["tau_b"])) + 0.017) < 1e-12
+    assert abs(float(np.mean(collected["tau_loop"])) + 0.067) < 1e-12
+    assert abs(float(np.mean(collected["delta_loop"])) - routes["delta_loop"]) < 1e-12
+    assert np.allclose(collected["delta_check"], collected["delta_loop"], atol=1e-12)
+    assert abs(latent_shift(first, np.array([1.0])) + 0.25) < 1e-12
+    assert abs(latent_shift(first, np.array([-1.0])) + 0.25) < 1e-12
+
+
 def test_selection_and_tiny_plot(tmp_path=None):
     assert SPECTRAL_SAMPLE_INDICES == (0, 10, 19)
     assert SPECTRAL_STEPS == (0, 20, 39)
@@ -221,6 +304,7 @@ def main():
     test_jvp_matches_centered_difference_and_adjoint()
     test_dense_correspondence_and_arnoldi_svd()
     test_two_step_identity_and_masked_cosine()
+    test_feedback_route_dense_and_torch()
     test_selection_and_tiny_plot()
     print("ok")
 
